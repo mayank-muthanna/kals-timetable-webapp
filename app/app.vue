@@ -12,16 +12,19 @@ const createSubject = useConvexMutation(api.timetable.createSubject);
 const removeSubject = useConvexMutation(api.timetable.removeSubject);
 const createClassSubject = useConvexMutation(api.timetable.createClassSubject);
 const removeClassSubject = useConvexMutation(api.timetable.removeClassSubject);
+const updateClassSubject = useConvexMutation(api.timetable.updateClassSubject);
 const createFixedPeriod = useConvexMutation(api.timetable.createFixedPeriod);
 const removeFixedPeriod = useConvexMutation(api.timetable.removeFixedPeriod);
+const updateFixedPeriod = useConvexMutation(api.timetable.updateFixedPeriod);
 const createMassAssignment = useConvexMutation(api.timetable.createMassAssignment);
 const removeMassAssignment = useConvexMutation(api.timetable.removeMassAssignment);
+const updateMassAssignment = useConvexMutation(api.timetable.updateMassAssignment);
 
 const newClassName = ref("");
 const newTeacherName = ref("");
 const newSubjectName = ref("");
 const newSubjectTeacherId = ref("");
-const newClassSubjectClassId = ref("");
+const newClassSubjectClassIds = ref<string[]>([]);
 const newClassSubjectSubjectId = ref("");
 const newClassSubjectWeeklyPeriods = ref(1);
 const newFixedClassId = ref("");
@@ -33,6 +36,21 @@ const newMassDay = ref(0);
 const newMassPeriod = ref(1);
 const newMassClassIds = ref<string[]>([]);
 
+const editingClassSubjectId = ref<string | null>(null);
+const editClassSubjectClassId = ref("");
+const editClassSubjectSubjectId = ref("");
+const editClassSubjectWeeklyPeriods = ref(1);
+const editingFixedId = ref<string | null>(null);
+const editFixedClassId = ref("");
+const editFixedSubjectId = ref("");
+const editFixedDay = ref(0);
+const editFixedPeriod = ref(1);
+const editingMassId = ref<string | null>(null);
+const editMassSubjectId = ref("");
+const editMassDay = ref(0);
+const editMassPeriod = ref(1);
+const editMassClassIds = ref<string[]>([]);
+
 const dayOptions = [
   { label: "Monday", short: "Mon", index: 0, periods: 8 },
   { label: "Tuesday", short: "Tue", index: 1, periods: 8 },
@@ -43,6 +61,36 @@ const dayOptions = [
 ];
 
 const resetMassSelection = () => {
+  newMassClassIds.value = [];
+};
+
+const resetClassSubjectSelection = () => {
+  newClassSubjectClassIds.value = [];
+};
+
+const toggleClassSubjectClass = (classId: string) => {
+  if (newClassSubjectClassIds.value.includes(classId)) {
+    newClassSubjectClassIds.value = newClassSubjectClassIds.value.filter(
+      (id) => id !== classId,
+    );
+  } else {
+    newClassSubjectClassIds.value = [...newClassSubjectClassIds.value, classId];
+  }
+};
+
+const selectAllClassSubjects = () => {
+  newClassSubjectClassIds.value = data.value?.classes.map((klass) => klass._id) ?? [];
+};
+
+const clearClassSubjects = () => {
+  newClassSubjectClassIds.value = [];
+};
+
+const selectAllMassClasses = () => {
+  newMassClassIds.value = data.value?.classes.map((klass) => klass._id) ?? [];
+};
+
+const clearMassClasses = () => {
   newMassClassIds.value = [];
 };
 
@@ -69,13 +117,21 @@ const addSubject = async () => {
 };
 
 const addClassSubject = async () => {
-  if (!newClassSubjectClassId.value || !newClassSubjectSubjectId.value) return;
-  await createClassSubject.mutate({
-    classId: newClassSubjectClassId.value,
-    subjectId: newClassSubjectSubjectId.value,
-    weeklyPeriods: Number(newClassSubjectWeeklyPeriods.value) || 1,
-  });
+  if (newClassSubjectClassIds.value.length === 0 || !newClassSubjectSubjectId.value) {
+    return;
+  }
+  const weeklyPeriods = Number(newClassSubjectWeeklyPeriods.value) || 1;
+  await Promise.all(
+    newClassSubjectClassIds.value.map((classId) =>
+      createClassSubject.mutate({
+        classId,
+        subjectId: newClassSubjectSubjectId.value,
+        weeklyPeriods,
+      }),
+    ),
+  );
   newClassSubjectWeeklyPeriods.value = 1;
+  resetClassSubjectSelection();
 };
 
 const addFixedPeriod = async () => {
@@ -103,9 +159,104 @@ const addMassAssignment = async () => {
   resetMassSelection();
 };
 
+const startEditClassSubject = (allocation: {
+  _id: string;
+  classId: string;
+  subjectId: string;
+  weeklyPeriods: number;
+}) => {
+  editingClassSubjectId.value = allocation._id;
+  editClassSubjectClassId.value = allocation.classId;
+  editClassSubjectSubjectId.value = allocation.subjectId;
+  editClassSubjectWeeklyPeriods.value = allocation.weeklyPeriods;
+};
+
+const cancelEditClassSubject = () => {
+  editingClassSubjectId.value = null;
+};
+
+const saveClassSubjectEdit = async () => {
+  if (!editingClassSubjectId.value) return;
+  await updateClassSubject.mutate({
+    id: editingClassSubjectId.value,
+    classId: editClassSubjectClassId.value,
+    subjectId: editClassSubjectSubjectId.value,
+    weeklyPeriods: Number(editClassSubjectWeeklyPeriods.value) || 1,
+  });
+  editingClassSubjectId.value = null;
+};
+
+const startEditFixed = (fixed: {
+  _id: string;
+  classId: string;
+  subjectId: string;
+  day: number;
+  period: number;
+}) => {
+  editingFixedId.value = fixed._id;
+  editFixedClassId.value = fixed.classId;
+  editFixedSubjectId.value = fixed.subjectId;
+  editFixedDay.value = fixed.day;
+  editFixedPeriod.value = fixed.period;
+};
+
+const cancelEditFixed = () => {
+  editingFixedId.value = null;
+};
+
+const saveFixedEdit = async () => {
+  if (!editingFixedId.value) return;
+  await updateFixedPeriod.mutate({
+    id: editingFixedId.value,
+    classId: editFixedClassId.value,
+    subjectId: editFixedSubjectId.value,
+    day: Number(editFixedDay.value),
+    period: Number(editFixedPeriod.value),
+  });
+  editingFixedId.value = null;
+};
+
+const startEditMass = (mass: {
+  _id: string;
+  subjectId: string;
+  classIds: string[];
+  day: number;
+  period: number;
+}) => {
+  editingMassId.value = mass._id;
+  editMassSubjectId.value = mass.subjectId;
+  editMassClassIds.value = [...mass.classIds];
+  editMassDay.value = mass.day;
+  editMassPeriod.value = mass.period;
+};
+
+const cancelEditMass = () => {
+  editingMassId.value = null;
+};
+
+const saveMassEdit = async () => {
+  if (!editingMassId.value) return;
+  await updateMassAssignment.mutate({
+    id: editingMassId.value,
+    subjectId: editMassSubjectId.value,
+    classIds: editMassClassIds.value,
+    day: Number(editMassDay.value),
+    period: Number(editMassPeriod.value),
+  });
+  editingMassId.value = null;
+};
+
+const toggleEditMassClass = (classId: string) => {
+  if (editMassClassIds.value.includes(classId)) {
+    editMassClassIds.value = editMassClassIds.value.filter((id) => id !== classId);
+  } else {
+    editMassClassIds.value = [...editMassClassIds.value, classId];
+  }
+};
+
 const timetable = computed(() => {
   if (!data.value) {
-    return { classSchedules: [], warnings: [] as string[] };
+    return { classSchedules: [], warnings: [] as WarningItem[] };
   }
 
   const { classes, subjects, teachers, classSubjects, fixedPeriods, massAssignments } =
@@ -115,7 +266,7 @@ const timetable = computed(() => {
 
   const teacherUsage: Record<number, Record<number, Set<string>>> = {};
   const remaining: Record<string, Record<string, number>> = {};
-  const warnings: string[] = [];
+  const warnings: WarningItem[] = [];
 
   const initTeacherUsage = (day: number, period: number) => {
     if (!teacherUsage[day]) teacherUsage[day] = {};
@@ -149,6 +300,7 @@ const timetable = computed(() => {
     subjectId,
     locked,
     source,
+    assignmentId,
   }: {
     classId: string;
     day: number;
@@ -156,6 +308,7 @@ const timetable = computed(() => {
     subjectId: string;
     locked: boolean;
     source: string;
+    assignmentId?: string;
   }) => {
     const schedule = classSchedules.find((item) => item.classId === classId);
     const subject = subjectById.get(subjectId);
@@ -165,24 +318,57 @@ const timetable = computed(() => {
     const teacherName = teacher?.name ?? "Unassigned";
 
     if (!schedule.grid[day] || period >= schedule.grid[day].length) {
-      warnings.push(
-        `Invalid slot for class ${schedule.className} on day ${day + 1} period ${period}.`,
-      );
+      warnings.push({
+        id: `${classId}-${day}-${period}-invalid`,
+        message: `Invalid slot for class ${schedule.className} on day ${
+          day + 1
+        } period ${period}.`,
+      });
       return;
     }
 
     if (schedule.grid[day][period]) {
-      warnings.push(
-        `Slot conflict for class ${schedule.className} on day ${day + 1} period ${period}.`,
-      );
+      warnings.push({
+        id: `${classId}-${day}-${period}-slot`,
+        message: `Slot conflict for class ${schedule.className} on day ${
+          day + 1
+        } period ${period}.`,
+        action:
+          source === "fixed"
+            ? {
+                type: "fixed",
+                id: assignmentId,
+              }
+            : source === "mass"
+              ? {
+                  type: "mass",
+                  id: assignmentId,
+                }
+              : undefined,
+      });
       return;
     }
 
     initTeacherUsage(day, period);
     if (teacher && teacherUsage[day][period].has(teacher._id) && source !== "mass") {
-      warnings.push(
-        `Teacher conflict: ${teacherName} already scheduled on day ${day + 1} period ${period}.`,
-      );
+      warnings.push({
+        id: `${teacher._id}-${day}-${period}-teacher`,
+        message: `Teacher conflict: ${teacherName} already scheduled on day ${
+          day + 1
+        } period ${period}.`,
+        action:
+          source === "fixed"
+            ? {
+                type: "fixed",
+                id: assignmentId,
+              }
+            : source === "mass"
+              ? {
+                  type: "mass",
+                  id: assignmentId,
+                }
+              : undefined,
+      });
       return;
     }
 
@@ -207,14 +393,20 @@ const timetable = computed(() => {
       subjectId: fixed.subjectId,
       locked: true,
       source: "fixed",
+      assignmentId: fixed._id,
     });
 
     if (!remaining[fixed.classId]?.[fixed.subjectId]) {
-      warnings.push(
-        `Fixed period for class ${
+      warnings.push({
+        id: `fixed-${fixed._id}-allocation`,
+        message: `Fixed period for class ${
           classes.find((item) => item._id === fixed.classId)?.name ?? "Unknown"
         } uses subject without remaining allocation.`,
-      );
+        action: {
+          type: "fixed",
+          id: fixed._id,
+        },
+      });
     } else {
       remaining[fixed.classId][fixed.subjectId] -= 1;
     }
@@ -229,6 +421,7 @@ const timetable = computed(() => {
         subjectId: mass.subjectId,
         locked: true,
         source: "mass",
+        assignmentId: mass._id,
       });
       if (remaining[classId]?.[mass.subjectId]) {
         remaining[classId][mass.subjectId] -= 1;
@@ -266,11 +459,12 @@ const timetable = computed(() => {
         const candidates = nonRepeat.length > 0 ? nonRepeat : available;
 
         if (candidates.length === 0) {
-          warnings.push(
-            `Unfilled slot for class ${schedule.className} on day ${
+          warnings.push({
+            id: `${schedule.classId}-${dayIndex}-${period}-unfilled`,
+            message: `Unfilled slot for class ${schedule.className} on day ${
               dayIndex + 1
             } period ${period}.`,
-          );
+          });
           continue;
         }
 
@@ -301,11 +495,12 @@ const timetable = computed(() => {
     Object.entries(classRemaining).forEach(([subjectId, count]) => {
       if (count > 0) {
         const subject = subjectById.get(subjectId);
-        warnings.push(
-          `Remaining ${count} periods for ${
+        warnings.push({
+          id: `${schedule.classId}-${subjectId}-remaining`,
+          message: `Remaining ${count} periods for ${
             subject?.name ?? "Unknown subject"
           } in class ${schedule.className}.`,
-        );
+        });
       }
     });
   }
@@ -320,6 +515,52 @@ const toggleMassClass = (classId: string) => {
     newMassClassIds.value = [...newMassClassIds.value, classId];
   }
 };
+
+type WarningItem = {
+  id: string;
+  message: string;
+  action?: {
+    type: "fixed" | "mass";
+    id?: string;
+  };
+};
+
+const resolveWarning = async (warning: WarningItem) => {
+  if (!warning.action?.id) return;
+  if (warning.action.type === "fixed") {
+    await removeFixedPeriod.mutate({ id: warning.action.id });
+  } else if (warning.action.type === "mass") {
+    await removeMassAssignment.mutate({ id: warning.action.id });
+  }
+};
+
+const editWarning = (warning: WarningItem) => {
+  if (!warning.action?.id || !data.value) return;
+  if (warning.action.type === "fixed") {
+    const fixed = data.value.fixedPeriods.find((item) => item._id === warning.action?.id);
+    if (fixed) startEditFixed(fixed);
+  }
+  if (warning.action.type === "mass") {
+    const mass = data.value.massAssignments.find((item) => item._id === warning.action?.id);
+    if (mass) startEditMass(mass);
+  }
+};
+
+const hasActionableWarnings = computed(() =>
+  timetable.value.warnings.some((warning) => warning.action?.id),
+);
+
+const canAddClassSubject = computed(
+  () =>
+    newClassSubjectClassIds.value.length > 0 &&
+    Boolean(newClassSubjectSubjectId.value),
+);
+const canAddFixed = computed(
+  () => Boolean(newFixedClassId.value) && Boolean(newFixedSubjectId.value),
+);
+const canAddMass = computed(
+  () => Boolean(newMassSubjectId.value) && newMassClassIds.value.length > 0,
+);
 </script>
 
 <template>
@@ -468,15 +709,46 @@ const toggleMassClass = (classId: string) => {
             Class subject scope
           </h3>
           <div class="grid gap-3">
-            <select
-              v-model="newClassSubjectClassId"
-              class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
-            >
-              <option value="">Select class</option>
-              <option v-for="klass in data?.classes" :key="klass._id" :value="klass._id">
-                {{ klass.name }}
-              </option>
-            </select>
+            <div class="bg-[#FFF4EE] border border-[#f0cdbb] rounded-xl p-3 space-y-2">
+              <div class="flex items-center justify-between">
+                <p class="text-sm text-[#8a4b32]">Select classes</p>
+                <div class="flex gap-2 text-xs">
+                  <button
+                    type="button"
+                    @click="selectAllClassSubjects"
+                    class="text-[#b96547] hover:text-[#8a4b32]"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    @click="clearClassSubjects"
+                    class="text-[#b96547] hover:text-[#8a4b32]"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-3">
+                <button
+                  v-for="klass in data?.classes"
+                  :key="klass._id"
+                  type="button"
+                  @click="toggleClassSubjectClass(klass._id)"
+                  class="px-3 py-1 rounded-full border text-sm"
+                  :class="
+                    newClassSubjectClassIds.includes(klass._id)
+                      ? 'bg-[#d17c5a] text-white border-[#d17c5a]'
+                      : 'bg-[#FFF4EE] text-[#5a2d1a] border-[#f0cdbb]'
+                  "
+                >
+                  {{ klass.name }}
+                </button>
+              </div>
+              <p class="text-xs text-[#b07a63]">
+                {{ newClassSubjectClassIds.length }} classes selected
+              </p>
+            </div>
             <select
               v-model="newClassSubjectSubjectId"
               class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
@@ -495,9 +767,11 @@ const toggleMassClass = (classId: string) => {
             />
             <button
               @click="addClassSubject"
+              :disabled="!canAddClassSubject"
               class="px-5 py-3 rounded-xl bg-[#d17c5a] text-white font-medium hover:bg-[#b96547] transition"
+              :class="!canAddClassSubject ? 'opacity-60 cursor-not-allowed' : ''"
             >
-              Add allocation
+              Add allocations
             </button>
           </div>
           <ul class="space-y-2 text-[#5a2d1a]">
@@ -506,22 +780,79 @@ const toggleMassClass = (classId: string) => {
               :key="allocation._id"
               class="flex items-center justify-between bg-[#FFF4EE] rounded-xl px-4 py-2 border border-[#f0cdbb]"
             >
-              <span>
-                {{
-                  data?.classes.find((klass) => klass._id === allocation.classId)?.name
-                }}
-                ·
-                {{
-                  data?.subjects.find((subject) => subject._id === allocation.subjectId)?.name
-                }}
-                · {{ allocation.weeklyPeriods }} / week
-              </span>
-              <button
-                @click="removeClassSubject.mutate({ id: allocation._id })"
-                class="text-[#b96547] hover:text-[#8a4b32] text-sm"
-              >
-                Delete
-              </button>
+              <div v-if="editingClassSubjectId === allocation._id" class="w-full space-y-2">
+                <div class="grid gap-2 md:grid-cols-3">
+                  <select
+                    v-model="editClassSubjectClassId"
+                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
+                  >
+                    <option v-for="klass in data?.classes" :key="klass._id" :value="klass._id">
+                      {{ klass.name }}
+                    </option>
+                  </select>
+                  <select
+                    v-model="editClassSubjectSubjectId"
+                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
+                  >
+                    <option
+                      v-for="subject in data?.subjects"
+                      :key="subject._id"
+                      :value="subject._id"
+                    >
+                      {{ subject.name }}
+                    </option>
+                  </select>
+                  <input
+                    v-model="editClassSubjectWeeklyPeriods"
+                    type="number"
+                    min="1"
+                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
+                  />
+                </div>
+                <div class="flex gap-2 text-sm">
+                  <button
+                    type="button"
+                    @click="saveClassSubjectEdit"
+                    class="text-white bg-[#d17c5a] px-3 py-1 rounded-lg"
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    @click="cancelEditClassSubject"
+                    class="text-[#b96547]"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+              <template v-else>
+                <span>
+                  {{
+                    data?.classes.find((klass) => klass._id === allocation.classId)?.name
+                  }}
+                  ·
+                  {{
+                    data?.subjects.find((subject) => subject._id === allocation.subjectId)?.name
+                  }}
+                  · {{ allocation.weeklyPeriods }} / week
+                </span>
+                <div class="flex gap-3 text-sm">
+                  <button
+                    type="button"
+                    @click="startEditClassSubject(allocation)"
+                    class="text-[#b96547] hover:text-[#8a4b32]"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    @click="removeClassSubject.mutate({ id: allocation._id })"
+                    class="text-[#b96547] hover:text-[#8a4b32]"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </template>
             </li>
           </ul>
         </div>
@@ -568,7 +899,9 @@ const toggleMassClass = (classId: string) => {
             </div>
             <button
               @click="addFixedPeriod"
+              :disabled="!canAddFixed"
               class="px-5 py-3 rounded-xl bg-[#d17c5a] text-white font-medium hover:bg-[#b96547] transition"
+              :class="!canAddFixed ? 'opacity-60 cursor-not-allowed' : ''"
             >
               Lock period
             </button>
@@ -579,22 +912,83 @@ const toggleMassClass = (classId: string) => {
               :key="fixed._id"
               class="flex items-center justify-between bg-[#FFF4EE] rounded-xl px-4 py-2 border border-[#f0cdbb]"
             >
-              <span>
-                {{
-                  data?.classes.find((klass) => klass._id === fixed.classId)?.name
-                }}
-                ·
-                {{
-                  data?.subjects.find((subject) => subject._id === fixed.subjectId)?.name
-                }}
-                · {{ dayOptions[fixed.day]?.short }} · Period {{ fixed.period }}
-              </span>
-              <button
-                @click="removeFixedPeriod.mutate({ id: fixed._id })"
-                class="text-[#b96547] hover:text-[#8a4b32] text-sm"
-              >
-                Delete
-              </button>
+              <div v-if="editingFixedId === fixed._id" class="w-full space-y-2">
+                <div class="grid gap-2 md:grid-cols-4">
+                  <select
+                    v-model="editFixedClassId"
+                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
+                  >
+                    <option v-for="klass in data?.classes" :key="klass._id" :value="klass._id">
+                      {{ klass.name }}
+                    </option>
+                  </select>
+                  <select
+                    v-model="editFixedSubjectId"
+                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
+                  >
+                    <option
+                      v-for="subject in data?.subjects"
+                      :key="subject._id"
+                      :value="subject._id"
+                    >
+                      {{ subject.name }}
+                    </option>
+                  </select>
+                  <select
+                    v-model="editFixedDay"
+                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
+                  >
+                    <option v-for="day in dayOptions" :key="day.index" :value="day.index">
+                      {{ day.label }}
+                    </option>
+                  </select>
+                  <input
+                    v-model="editFixedPeriod"
+                    type="number"
+                    min="1"
+                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
+                  />
+                </div>
+                <div class="flex gap-2 text-sm">
+                  <button
+                    type="button"
+                    @click="saveFixedEdit"
+                    class="text-white bg-[#d17c5a] px-3 py-1 rounded-lg"
+                  >
+                    Save
+                  </button>
+                  <button type="button" @click="cancelEditFixed" class="text-[#b96547]">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+              <template v-else>
+                <span>
+                  {{
+                    data?.classes.find((klass) => klass._id === fixed.classId)?.name
+                  }}
+                  ·
+                  {{
+                    data?.subjects.find((subject) => subject._id === fixed.subjectId)?.name
+                  }}
+                  · {{ dayOptions[fixed.day]?.short }} · Period {{ fixed.period }}
+                </span>
+                <div class="flex gap-3 text-sm">
+                  <button
+                    type="button"
+                    @click="startEditFixed(fixed)"
+                    class="text-[#b96547] hover:text-[#8a4b32]"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    @click="removeFixedPeriod.mutate({ id: fixed._id })"
+                    class="text-[#b96547] hover:text-[#8a4b32]"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </template>
             </li>
           </ul>
         </div>
@@ -629,7 +1023,25 @@ const toggleMassClass = (classId: string) => {
               />
             </div>
             <div class="bg-[#FFF4EE] border border-[#f0cdbb] rounded-xl p-3 space-y-2">
-              <p class="text-sm text-[#8a4b32]">Select classes</p>
+              <div class="flex items-center justify-between">
+                <p class="text-sm text-[#8a4b32]">Select classes</p>
+                <div class="flex gap-2 text-xs">
+                  <button
+                    type="button"
+                    @click="selectAllMassClasses"
+                    class="text-[#b96547] hover:text-[#8a4b32]"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    @click="clearMassClasses"
+                    class="text-[#b96547] hover:text-[#8a4b32]"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
               <div class="flex flex-wrap gap-3">
                 <button
                   v-for="klass in data?.classes"
@@ -645,10 +1057,15 @@ const toggleMassClass = (classId: string) => {
                   {{ klass.name }}
                 </button>
               </div>
+              <p class="text-xs text-[#b07a63]">
+                {{ newMassClassIds.length }} classes selected
+              </p>
             </div>
             <button
               @click="addMassAssignment"
+              :disabled="!canAddMass"
               class="px-5 py-3 rounded-xl bg-[#d17c5a] text-white font-medium hover:bg-[#b96547] transition"
+              :class="!canAddMass ? 'opacity-60 cursor-not-allowed' : ''"
             >
               Add mass subject
             </button>
@@ -659,24 +1076,98 @@ const toggleMassClass = (classId: string) => {
               :key="mass._id"
               class="flex items-center justify-between bg-[#FFF4EE] rounded-xl px-4 py-2 border border-[#f0cdbb]"
             >
-              <span>
-                {{
-                  data?.subjects.find((subject) => subject._id === mass.subjectId)?.name
-                }}
-                · {{ dayOptions[mass.day]?.short }} · Period {{ mass.period }} ·
-                {{
-                  mass.classIds
-                    .map((id) => data?.classes.find((klass) => klass._id === id)?.name)
-                    .filter(Boolean)
-                    .join(", ")
-                }}
-              </span>
-              <button
-                @click="removeMassAssignment.mutate({ id: mass._id })"
-                class="text-[#b96547] hover:text-[#8a4b32] text-sm"
-              >
-                Delete
-              </button>
+              <div v-if="editingMassId === mass._id" class="w-full space-y-2">
+                <div class="grid gap-2 md:grid-cols-4">
+                  <select
+                    v-model="editMassSubjectId"
+                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
+                  >
+                    <option
+                      v-for="subject in data?.subjects"
+                      :key="subject._id"
+                      :value="subject._id"
+                    >
+                      {{ subject.name }}
+                    </option>
+                  </select>
+                  <select
+                    v-model="editMassDay"
+                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
+                  >
+                    <option v-for="day in dayOptions" :key="day.index" :value="day.index">
+                      {{ day.label }}
+                    </option>
+                  </select>
+                  <input
+                    v-model="editMassPeriod"
+                    type="number"
+                    min="1"
+                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
+                  />
+                  <div class="flex items-center text-xs text-[#8a4b32]">
+                    {{ editMassClassIds.length }} classes
+                  </div>
+                </div>
+                <div class="bg-white border border-[#f0cdbb] rounded-xl p-2">
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      v-for="klass in data?.classes"
+                      :key="klass._id"
+                      type="button"
+                      @click="toggleEditMassClass(klass._id)"
+                      class="px-2 py-1 rounded-full border text-xs"
+                      :class="
+                        editMassClassIds.includes(klass._id)
+                          ? 'bg-[#d17c5a] text-white border-[#d17c5a]'
+                          : 'bg-[#FFF4EE] text-[#5a2d1a] border-[#f0cdbb]'
+                      "
+                    >
+                      {{ klass.name }}
+                    </button>
+                  </div>
+                </div>
+                <div class="flex gap-2 text-sm">
+                  <button
+                    type="button"
+                    @click="saveMassEdit"
+                    class="text-white bg-[#d17c5a] px-3 py-1 rounded-lg"
+                  >
+                    Save
+                  </button>
+                  <button type="button" @click="cancelEditMass" class="text-[#b96547]">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+              <template v-else>
+                <span>
+                  {{
+                    data?.subjects.find((subject) => subject._id === mass.subjectId)?.name
+                  }}
+                  · {{ dayOptions[mass.day]?.short }} · Period {{ mass.period }} ·
+                  {{
+                    mass.classIds
+                      .map((id) => data?.classes.find((klass) => klass._id === id)?.name)
+                      .filter(Boolean)
+                      .join(", ")
+                  }}
+                </span>
+                <div class="flex gap-3 text-sm">
+                  <button
+                    type="button"
+                    @click="startEditMass(mass)"
+                    class="text-[#b96547] hover:text-[#8a4b32]"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    @click="removeMassAssignment.mutate({ id: mass._id })"
+                    class="text-[#b96547] hover:text-[#8a4b32]"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </template>
             </li>
           </ul>
         </div>
@@ -689,10 +1180,44 @@ const toggleMassClass = (classId: string) => {
             Updated automatically with each change
           </span>
         </div>
-        <div v-if="timetable.warnings.length" class="space-y-2">
-          <p class="text-sm font-semibold text-[#8a4b32]">Warnings</p>
-          <ul class="text-sm text-[#8a4b32] list-disc list-inside space-y-1">
-            <li v-for="warning in timetable.warnings" :key="warning">{{ warning }}</li>
+        <div v-if="timetable.warnings.length" class="space-y-3">
+          <div class="flex items-center justify-between">
+            <p class="text-sm font-semibold text-[#8a4b32]">Warnings</p>
+            <span class="text-xs text-[#b07a63]">
+              {{ timetable.warnings.length }} issues detected
+            </span>
+          </div>
+          <div
+            v-if="hasActionableWarnings"
+            class="text-xs text-[#8a4b32] bg-[#FFF4EE] border border-[#f0cdbb] rounded-xl p-3"
+          >
+            Tip: Use the resolve buttons to remove conflicting fixed/mass entries,
+            or edit them to adjust the day/period.
+          </div>
+          <ul class="text-sm text-[#8a4b32] space-y-2">
+            <li
+              v-for="warning in timetable.warnings"
+              :key="warning.id"
+              class="flex items-center justify-between gap-3 bg-[#FFF4EE] border border-[#f0cdbb] rounded-xl px-3 py-2"
+            >
+              <span>{{ warning.message }}</span>
+              <div v-if="warning.action?.id" class="flex gap-2 text-xs">
+                <button
+                  type="button"
+                  @click="editWarning(warning)"
+                  class="text-[#b96547] hover:text-[#8a4b32]"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  @click="resolveWarning(warning)"
+                  class="text-[#b96547] hover:text-[#8a4b32]"
+                >
+                  Resolve
+                </button>
+              </div>
+            </li>
           </ul>
         </div>
         <div class="space-y-8">

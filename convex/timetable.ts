@@ -107,6 +107,22 @@ export const removeClassSubject = mutation({
   },
 });
 
+export const updateClassSubject = mutation({
+  args: {
+    id: v.id("classSubjects"),
+    classId: v.id("classes"),
+    subjectId: v.id("subjects"),
+    weeklyPeriods: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, {
+      classId: args.classId,
+      subjectId: args.subjectId,
+      weeklyPeriods: args.weeklyPeriods,
+    });
+  },
+});
+
 export const createFixedPeriod = mutation({
   args: {
     classId: v.id("classes"),
@@ -133,6 +149,24 @@ export const removeFixedPeriod = mutation({
   },
 });
 
+export const updateFixedPeriod = mutation({
+  args: {
+    id: v.id("fixedPeriods"),
+    classId: v.id("classes"),
+    subjectId: v.id("subjects"),
+    day: v.number(),
+    period: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, {
+      classId: args.classId,
+      subjectId: args.subjectId,
+      day: args.day,
+      period: args.period,
+    });
+  },
+});
+
 export const createMassAssignment = mutation({
   args: {
     subjectId: v.id("subjects"),
@@ -156,5 +190,23 @@ export const removeMassAssignment = mutation({
   },
   handler: async (ctx, args) => {
     await ctx.db.delete(args.id);
+  },
+});
+
+export const updateMassAssignment = mutation({
+  args: {
+    id: v.id("massAssignments"),
+    subjectId: v.id("subjects"),
+    classIds: v.array(v.id("classes")),
+    day: v.number(),
+    period: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, {
+      subjectId: args.subjectId,
+      classIds: args.classIds,
+      day: args.day,
+      period: args.period,
+    });
   },
 });
