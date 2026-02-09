@@ -16,9 +16,15 @@ const updateClassSubject = useConvexMutation(api.timetable.updateClassSubject);
 const createFixedPeriod = useConvexMutation(api.timetable.createFixedPeriod);
 const removeFixedPeriod = useConvexMutation(api.timetable.removeFixedPeriod);
 const updateFixedPeriod = useConvexMutation(api.timetable.updateFixedPeriod);
-const createMassAssignment = useConvexMutation(api.timetable.createMassAssignment);
-const removeMassAssignment = useConvexMutation(api.timetable.removeMassAssignment);
-const updateMassAssignment = useConvexMutation(api.timetable.updateMassAssignment);
+const createMassAssignment = useConvexMutation(
+  api.timetable.createMassAssignment,
+);
+const removeMassAssignment = useConvexMutation(
+  api.timetable.removeMassAssignment,
+);
+const updateMassAssignment = useConvexMutation(
+  api.timetable.updateMassAssignment,
+);
 
 const newClassName = ref("");
 const newTeacherName = ref("");
@@ -79,7 +85,8 @@ const toggleClassSubjectClass = (classId: string) => {
 };
 
 const selectAllClassSubjects = () => {
-  newClassSubjectClassIds.value = data.value?.classes.map((klass) => klass._id) ?? [];
+  newClassSubjectClassIds.value =
+    data.value?.classes.map((klass) => klass._id) ?? [];
 };
 
 const clearClassSubjects = () => {
@@ -117,7 +124,10 @@ const addSubject = async () => {
 };
 
 const addClassSubject = async () => {
-  if (newClassSubjectClassIds.value.length === 0 || !newClassSubjectSubjectId.value) {
+  if (
+    newClassSubjectClassIds.value.length === 0 ||
+    !newClassSubjectSubjectId.value
+  ) {
     return;
   }
   const weeklyPeriods = Number(newClassSubjectWeeklyPeriods.value) || 1;
@@ -248,7 +258,9 @@ const saveMassEdit = async () => {
 
 const toggleEditMassClass = (classId: string) => {
   if (editMassClassIds.value.includes(classId)) {
-    editMassClassIds.value = editMassClassIds.value.filter((id) => id !== classId);
+    editMassClassIds.value = editMassClassIds.value.filter(
+      (id) => id !== classId,
+    );
   } else {
     editMassClassIds.value = [...editMassClassIds.value, classId];
   }
@@ -259,10 +271,20 @@ const timetable = computed(() => {
     return { classSchedules: [], warnings: [] as WarningItem[] };
   }
 
-  const { classes, subjects, teachers, classSubjects, fixedPeriods, massAssignments } =
-    data.value;
-  const subjectById = new Map(subjects.map((subject) => [subject._id, subject]));
-  const teacherById = new Map(teachers.map((teacher) => [teacher._id, teacher]));
+  const {
+    classes,
+    subjects,
+    teachers,
+    classSubjects,
+    fixedPeriods,
+    massAssignments,
+  } = data.value;
+  const subjectById = new Map(
+    subjects.map((subject) => [subject._id, subject]),
+  );
+  const teacherById = new Map(
+    teachers.map((teacher) => [teacher._id, teacher]),
+  );
 
   const teacherUsage: Record<number, Record<number, Set<string>>> = {};
   const remaining: Record<string, Record<string, number>> = {};
@@ -275,13 +297,17 @@ const timetable = computed(() => {
 
   const classSchedules = classes.map((klass) => {
     const grid = dayOptions.map((day) => {
-      return Array.from({ length: day.periods + 1 }, () => null as null | {
-        subjectId: string;
-        subjectName: string;
-        teacherName: string;
-        locked: boolean;
-        source: string;
-      });
+      return Array.from(
+        { length: day.periods + 1 },
+        () =>
+          null as null | {
+            subjectId: string;
+            subjectName: string;
+            teacherName: string;
+            locked: boolean;
+            source: string;
+          },
+      );
     });
     return { classId: klass._id, className: klass.name, grid };
   });
@@ -350,7 +376,11 @@ const timetable = computed(() => {
     }
 
     initTeacherUsage(day, period);
-    if (teacher && teacherUsage[day][period].has(teacher._id) && source !== "mass") {
+    if (
+      teacher &&
+      teacherUsage[day][period].has(teacher._id) &&
+      source !== "mass"
+    ) {
       warnings.push({
         id: `${teacher._id}-${day}-${period}-teacher`,
         message: `Teacher conflict: ${teacherName} already scheduled on day ${
@@ -455,7 +485,9 @@ const timetable = computed(() => {
           return true;
         });
 
-        const nonRepeat = available.filter((subjectId) => !subjectsInDay.has(subjectId));
+        const nonRepeat = available.filter(
+          (subjectId) => !subjectsInDay.has(subjectId),
+        );
         const candidates = nonRepeat.length > 0 ? nonRepeat : available;
 
         if (candidates.length === 0) {
@@ -510,7 +542,9 @@ const timetable = computed(() => {
 
 const toggleMassClass = (classId: string) => {
   if (newMassClassIds.value.includes(classId)) {
-    newMassClassIds.value = newMassClassIds.value.filter((id) => id !== classId);
+    newMassClassIds.value = newMassClassIds.value.filter(
+      (id) => id !== classId,
+    );
   } else {
     newMassClassIds.value = [...newMassClassIds.value, classId];
   }
@@ -537,11 +571,15 @@ const resolveWarning = async (warning: WarningItem) => {
 const editWarning = (warning: WarningItem) => {
   if (!warning.action?.id || !data.value) return;
   if (warning.action.type === "fixed") {
-    const fixed = data.value.fixedPeriods.find((item) => item._id === warning.action?.id);
+    const fixed = data.value.fixedPeriods.find(
+      (item) => item._id === warning.action?.id,
+    );
     if (fixed) startEditFixed(fixed);
   }
   if (warning.action.type === "mass") {
-    const mass = data.value.massAssignments.find((item) => item._id === warning.action?.id);
+    const mass = data.value.massAssignments.find(
+      (item) => item._id === warning.action?.id,
+    );
     if (mass) startEditMass(mass);
   }
 };
@@ -575,7 +613,9 @@ const canAddMass = computed(
 
     <header class="relative z-10 px-6 py-5 border-b border-[#f0cdbb]">
       <div class="max-w-6xl mx-auto flex items-center justify-between">
-        <h1 class="text-2xl font-semibold text-[#5a2d1a]">Peach Timetables</h1>
+        <h1 class="text-2xl font-semibold text-[#5a2d1a]">
+          KALS Timetable generator
+        </h1>
         <span class="text-sm text-[#8a4b32]">Live • Dynamic</span>
       </div>
     </header>
@@ -592,7 +632,9 @@ const canAddMass = computed(
       </section>
 
       <section class="grid lg:grid-cols-2 gap-6">
-        <div class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4">
+        <div
+          class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4"
+        >
           <h3 class="text-xl font-semibold text-[#5a2d1a]">Classes</h3>
           <div class="flex gap-3">
             <input
@@ -624,7 +666,9 @@ const canAddMass = computed(
           </ul>
         </div>
 
-        <div class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4">
+        <div
+          class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4"
+        >
           <h3 class="text-xl font-semibold text-[#5a2d1a]">Teachers</h3>
           <div class="flex gap-3">
             <input
@@ -658,7 +702,9 @@ const canAddMass = computed(
       </section>
 
       <section class="grid lg:grid-cols-2 gap-6">
-        <div class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4">
+        <div
+          class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4"
+        >
           <h3 class="text-xl font-semibold text-[#5a2d1a]">Subjects</h3>
           <div class="grid gap-3">
             <input
@@ -671,7 +717,11 @@ const canAddMass = computed(
               class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
             >
               <option value="">Select teacher</option>
-              <option v-for="teacher in data?.teachers" :key="teacher._id" :value="teacher._id">
+              <option
+                v-for="teacher in data?.teachers"
+                :key="teacher._id"
+                :value="teacher._id"
+              >
                 {{ teacher.name }}
               </option>
             </select>
@@ -691,7 +741,9 @@ const canAddMass = computed(
               <span>
                 {{ subject.name }} ·
                 {{
-                  data?.teachers.find((teacher) => teacher._id === subject.teacherId)?.name
+                  data?.teachers.find(
+                    (teacher) => teacher._id === subject.teacherId,
+                  )?.name
                 }}
               </span>
               <button
@@ -704,12 +756,16 @@ const canAddMass = computed(
           </ul>
         </div>
 
-        <div class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4">
+        <div
+          class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4"
+        >
           <h3 class="text-xl font-semibold text-[#5a2d1a]">
             Class subject scope
           </h3>
           <div class="grid gap-3">
-            <div class="bg-[#FFF4EE] border border-[#f0cdbb] rounded-xl p-3 space-y-2">
+            <div
+              class="bg-[#FFF4EE] border border-[#f0cdbb] rounded-xl p-3 space-y-2"
+            >
               <div class="flex items-center justify-between">
                 <p class="text-sm text-[#8a4b32]">Select classes</p>
                 <div class="flex gap-2 text-xs">
@@ -754,7 +810,11 @@ const canAddMass = computed(
               class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
             >
               <option value="">Select subject</option>
-              <option v-for="subject in data?.subjects" :key="subject._id" :value="subject._id">
+              <option
+                v-for="subject in data?.subjects"
+                :key="subject._id"
+                :value="subject._id"
+              >
                 {{ subject.name }}
               </option>
             </select>
@@ -769,7 +829,9 @@ const canAddMass = computed(
               @click="addClassSubject"
               :disabled="!canAddClassSubject"
               class="px-5 py-3 rounded-xl bg-[#d17c5a] text-white font-medium hover:bg-[#b96547] transition"
-              :class="!canAddClassSubject ? 'opacity-60 cursor-not-allowed' : ''"
+              :class="
+                !canAddClassSubject ? 'opacity-60 cursor-not-allowed' : ''
+              "
             >
               Add allocations
             </button>
@@ -780,13 +842,20 @@ const canAddMass = computed(
               :key="allocation._id"
               class="flex items-center justify-between bg-[#FFF4EE] rounded-xl px-4 py-2 border border-[#f0cdbb]"
             >
-              <div v-if="editingClassSubjectId === allocation._id" class="w-full space-y-2">
+              <div
+                v-if="editingClassSubjectId === allocation._id"
+                class="w-full space-y-2"
+              >
                 <div class="grid gap-2 md:grid-cols-3">
                   <select
                     v-model="editClassSubjectClassId"
                     class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
                   >
-                    <option v-for="klass in data?.classes" :key="klass._id" :value="klass._id">
+                    <option
+                      v-for="klass in data?.classes"
+                      :key="klass._id"
+                      :value="klass._id"
+                    >
                       {{ klass.name }}
                     </option>
                   </select>
@@ -829,11 +898,15 @@ const canAddMass = computed(
               <template v-else>
                 <span>
                   {{
-                    data?.classes.find((klass) => klass._id === allocation.classId)?.name
+                    data?.classes.find(
+                      (klass) => klass._id === allocation.classId,
+                    )?.name
                   }}
                   ·
                   {{
-                    data?.subjects.find((subject) => subject._id === allocation.subjectId)?.name
+                    data?.subjects.find(
+                      (subject) => subject._id === allocation.subjectId,
+                    )?.name
                   }}
                   · {{ allocation.weeklyPeriods }} / week
                 </span>
@@ -859,7 +932,9 @@ const canAddMass = computed(
       </section>
 
       <section class="grid lg:grid-cols-2 gap-6">
-        <div class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4">
+        <div
+          class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4"
+        >
           <h3 class="text-xl font-semibold text-[#5a2d1a]">Fixed periods</h3>
           <div class="grid gap-3">
             <select
@@ -867,7 +942,11 @@ const canAddMass = computed(
               class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
             >
               <option value="">Select class</option>
-              <option v-for="klass in data?.classes" :key="klass._id" :value="klass._id">
+              <option
+                v-for="klass in data?.classes"
+                :key="klass._id"
+                :value="klass._id"
+              >
                 {{ klass.name }}
               </option>
             </select>
@@ -876,7 +955,11 @@ const canAddMass = computed(
               class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
             >
               <option value="">Select subject</option>
-              <option v-for="subject in data?.subjects" :key="subject._id" :value="subject._id">
+              <option
+                v-for="subject in data?.subjects"
+                :key="subject._id"
+                :value="subject._id"
+              >
                 {{ subject.name }}
               </option>
             </select>
@@ -885,7 +968,11 @@ const canAddMass = computed(
                 v-model="newFixedDay"
                 class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
               >
-                <option v-for="day in dayOptions" :key="day.index" :value="day.index">
+                <option
+                  v-for="day in dayOptions"
+                  :key="day.index"
+                  :value="day.index"
+                >
                   {{ day.label }}
                 </option>
               </select>
@@ -918,7 +1005,11 @@ const canAddMass = computed(
                     v-model="editFixedClassId"
                     class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
                   >
-                    <option v-for="klass in data?.classes" :key="klass._id" :value="klass._id">
+                    <option
+                      v-for="klass in data?.classes"
+                      :key="klass._id"
+                      :value="klass._id"
+                    >
                       {{ klass.name }}
                     </option>
                   </select>
@@ -938,7 +1029,11 @@ const canAddMass = computed(
                     v-model="editFixedDay"
                     class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
                   >
-                    <option v-for="day in dayOptions" :key="day.index" :value="day.index">
+                    <option
+                      v-for="day in dayOptions"
+                      :key="day.index"
+                      :value="day.index"
+                    >
                       {{ day.label }}
                     </option>
                   </select>
@@ -957,7 +1052,11 @@ const canAddMass = computed(
                   >
                     Save
                   </button>
-                  <button type="button" @click="cancelEditFixed" class="text-[#b96547]">
+                  <button
+                    type="button"
+                    @click="cancelEditFixed"
+                    class="text-[#b96547]"
+                  >
                     Cancel
                   </button>
                 </div>
@@ -965,13 +1064,17 @@ const canAddMass = computed(
               <template v-else>
                 <span>
                   {{
-                    data?.classes.find((klass) => klass._id === fixed.classId)?.name
+                    data?.classes.find((klass) => klass._id === fixed.classId)
+                      ?.name
                   }}
                   ·
                   {{
-                    data?.subjects.find((subject) => subject._id === fixed.subjectId)?.name
+                    data?.subjects.find(
+                      (subject) => subject._id === fixed.subjectId,
+                    )?.name
                   }}
-                  · {{ dayOptions[fixed.day]?.short }} · Period {{ fixed.period }}
+                  · {{ dayOptions[fixed.day]?.short }} · Period
+                  {{ fixed.period }}
                 </span>
                 <div class="flex gap-3 text-sm">
                   <button
@@ -993,7 +1096,9 @@ const canAddMass = computed(
           </ul>
         </div>
 
-        <div class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4">
+        <div
+          class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4"
+        >
           <h3 class="text-xl font-semibold text-[#5a2d1a]">Mass subjects</h3>
           <div class="grid gap-3">
             <select
@@ -1001,7 +1106,11 @@ const canAddMass = computed(
               class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
             >
               <option value="">Select subject</option>
-              <option v-for="subject in data?.subjects" :key="subject._id" :value="subject._id">
+              <option
+                v-for="subject in data?.subjects"
+                :key="subject._id"
+                :value="subject._id"
+              >
                 {{ subject.name }}
               </option>
             </select>
@@ -1010,7 +1119,11 @@ const canAddMass = computed(
                 v-model="newMassDay"
                 class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
               >
-                <option v-for="day in dayOptions" :key="day.index" :value="day.index">
+                <option
+                  v-for="day in dayOptions"
+                  :key="day.index"
+                  :value="day.index"
+                >
                   {{ day.label }}
                 </option>
               </select>
@@ -1022,7 +1135,9 @@ const canAddMass = computed(
                 placeholder="Period #"
               />
             </div>
-            <div class="bg-[#FFF4EE] border border-[#f0cdbb] rounded-xl p-3 space-y-2">
+            <div
+              class="bg-[#FFF4EE] border border-[#f0cdbb] rounded-xl p-3 space-y-2"
+            >
               <div class="flex items-center justify-between">
                 <p class="text-sm text-[#8a4b32]">Select classes</p>
                 <div class="flex gap-2 text-xs">
@@ -1094,7 +1209,11 @@ const canAddMass = computed(
                     v-model="editMassDay"
                     class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
                   >
-                    <option v-for="day in dayOptions" :key="day.index" :value="day.index">
+                    <option
+                      v-for="day in dayOptions"
+                      :key="day.index"
+                      :value="day.index"
+                    >
                       {{ day.label }}
                     </option>
                   </select>
@@ -1134,7 +1253,11 @@ const canAddMass = computed(
                   >
                     Save
                   </button>
-                  <button type="button" @click="cancelEditMass" class="text-[#b96547]">
+                  <button
+                    type="button"
+                    @click="cancelEditMass"
+                    class="text-[#b96547]"
+                  >
                     Cancel
                   </button>
                 </div>
@@ -1142,12 +1265,18 @@ const canAddMass = computed(
               <template v-else>
                 <span>
                   {{
-                    data?.subjects.find((subject) => subject._id === mass.subjectId)?.name
+                    data?.subjects.find(
+                      (subject) => subject._id === mass.subjectId,
+                    )?.name
                   }}
-                  · {{ dayOptions[mass.day]?.short }} · Period {{ mass.period }} ·
+                  · {{ dayOptions[mass.day]?.short }} · Period
+                  {{ mass.period }} ·
                   {{
                     mass.classIds
-                      .map((id) => data?.classes.find((klass) => klass._id === id)?.name)
+                      .map(
+                        (id) =>
+                          data?.classes.find((klass) => klass._id === id)?.name,
+                      )
                       .filter(Boolean)
                       .join(", ")
                   }}
@@ -1173,9 +1302,13 @@ const canAddMass = computed(
         </div>
       </section>
 
-      <section class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4">
+      <section
+        class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4"
+      >
         <div class="flex items-center justify-between">
-          <h3 class="text-xl font-semibold text-[#5a2d1a]">Generated timetable</h3>
+          <h3 class="text-xl font-semibold text-[#5a2d1a]">
+            Generated timetable
+          </h3>
           <span class="text-sm text-[#8a4b32]">
             Updated automatically with each change
           </span>
@@ -1191,8 +1324,8 @@ const canAddMass = computed(
             v-if="hasActionableWarnings"
             class="text-xs text-[#8a4b32] bg-[#FFF4EE] border border-[#f0cdbb] rounded-xl p-3"
           >
-            Tip: Use the resolve buttons to remove conflicting fixed/mass entries,
-            or edit them to adjust the day/period.
+            Tip: Use the resolve buttons to remove conflicting fixed/mass
+            entries, or edit them to adjust the day/period.
           </div>
           <ul class="text-sm text-[#8a4b32] space-y-2">
             <li
@@ -1233,24 +1366,31 @@ const canAddMass = computed(
               <table class="min-w-full border-collapse text-sm">
                 <thead>
                   <tr>
-                    <th class="text-left text-[#8a4b32] py-2 px-3">Period</th>
+                    <th class="text-left text-[#8a4b32] py-2 px-3">Day</th>
+
                     <th
-                      v-for="day in dayOptions"
-                      :key="day.index"
+                      v-for="period in 8"
+                      :key="period"
                       class="text-left text-[#8a4b32] py-2 px-3"
                     >
-                      {{ day.short }}
+                      Period {{ period }}
                     </th>
                   </tr>
                 </thead>
+
                 <tbody>
-                  <tr v-for="period in 8" :key="period" class="border-t border-[#f0cdbb]">
-                    <td class="py-3 px-3 text-[#8a4b32] font-medium">#{{ period }}</td>
-                    <td
-                      v-for="day in dayOptions"
-                      :key="day.index"
-                      class="py-3 px-3"
-                    >
+                  <tr
+                    v-for="day in dayOptions"
+                    :key="day.index"
+                    class="border-t border-[#f0cdbb]"
+                  >
+                    <!-- Day name row label -->
+                    <td class="py-3 px-3 text-[#8a4b32] font-medium">
+                      {{ day.short }}
+                    </td>
+
+                    <!-- Period cells -->
+                    <td v-for="period in 8" :key="period" class="py-3 px-3">
                       <div v-if="period <= day.periods">
                         <div
                           v-if="schedule.grid[day.index][period]"
@@ -1266,13 +1406,17 @@ const canAddMass = computed(
                           </p>
                           <p class="text-xs text-[#8a4b32]">
                             {{ schedule.grid[day.index][period]?.teacherName }}
-                            <span v-if="schedule.grid[day.index][period]?.locked">
+                            <span
+                              v-if="schedule.grid[day.index][period]?.locked"
+                            >
                               · Locked
                             </span>
                           </p>
                         </div>
+
                         <div v-else class="text-[#b07a63] italic">Unfilled</div>
                       </div>
+
                       <div v-else class="text-[#d6a08a] italic">—</div>
                     </td>
                   </tr>
@@ -1285,7 +1429,7 @@ const canAddMass = computed(
     </main>
 
     <footer class="relative z-10 text-center text-sm text-[#8a4b32] py-6">
-      Built with Nuxt + Convex
+      Built by Mayank Muthanna
     </footer>
   </div>
 </template>
