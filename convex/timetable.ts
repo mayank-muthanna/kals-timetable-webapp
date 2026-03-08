@@ -160,14 +160,15 @@ export const updateClassSubject = mutation({
 export const createFixedPeriod = mutation({
   args: {
     classId: v.id("classes"),
-    subjectId: v.id("subjects"),
+    subjectIds: v.array(v.id("subjects")),
     day: v.number(),
     period: v.number(),
   },
   handler: async (ctx, args) => {
     await ctx.db.insert("fixedPeriods", {
       classId: args.classId,
-      subjectId: args.subjectId,
+      subjectId: args.subjectIds[0],
+      subjectIds: args.subjectIds,
       day: args.day,
       period: args.period,
     });
@@ -187,14 +188,15 @@ export const updateFixedPeriod = mutation({
   args: {
     id: v.id("fixedPeriods"),
     classId: v.id("classes"),
-    subjectId: v.id("subjects"),
+    subjectIds: v.array(v.id("subjects")),
     day: v.number(),
     period: v.number(),
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.id, {
       classId: args.classId,
-      subjectId: args.subjectId,
+      subjectId: args.subjectIds[0],
+      subjectIds: args.subjectIds,
       day: args.day,
       period: args.period,
     });
@@ -203,14 +205,15 @@ export const updateFixedPeriod = mutation({
 
 export const createMassAssignment = mutation({
   args: {
-    subjectId: v.id("subjects"),
+    subjectIds: v.array(v.id("subjects")),
     classIds: v.array(v.id("classes")),
     day: v.number(),
     period: v.number(),
   },
   handler: async (ctx, args) => {
     await ctx.db.insert("massAssignments", {
-      subjectId: args.subjectId,
+      subjectId: args.subjectIds[0],
+      subjectIds: args.subjectIds,
       classIds: args.classIds,
       day: args.day,
       period: args.period,
@@ -230,14 +233,15 @@ export const removeMassAssignment = mutation({
 export const updateMassAssignment = mutation({
   args: {
     id: v.id("massAssignments"),
-    subjectId: v.id("subjects"),
+    subjectIds: v.array(v.id("subjects")),
     classIds: v.array(v.id("classes")),
     day: v.number(),
     period: v.number(),
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.id, {
-      subjectId: args.subjectId,
+      subjectId: args.subjectIds[0],
+      subjectIds: args.subjectIds,
       classIds: args.classIds,
       day: args.day,
       period: args.period,

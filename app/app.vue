@@ -47,10 +47,10 @@ const newClassSubjectSubjectId = ref("");
 const newClassSubjectWeeklyPeriods = ref(1);
 const newClassSubjectClassIds = ref<string[]>([]);
 const newFixedClassId = ref("");
-const newFixedSubjectId = ref("");
+const newFixedSubjectIds = ref<string[]>([]);
 const newFixedDay = ref(0);
 const newFixedPeriod = ref(1);
-const newMassSubjectId = ref("");
+const newMassSubjectIds = ref<string[]>([]);
 const newMassDay = ref(0);
 const newMassPeriod = ref(1);
 const newMassClassIds = ref<string[]>([]);
@@ -299,6 +299,18 @@ const subjectLabel = (id: string) => subjectMeta.value.get(id)?.label ?? "Unknow
 const subjectTitle = (id: string) =>
   sortedSubjects.value.find((subject) => subject._id === id)?.name ?? "Unknown subject";
 
+const getLockSubjectIds = (entry: { subjectId?: string; subjectIds?: string[] }) =>
+  entry.subjectIds?.length
+    ? entry.subjectIds
+    : entry.subjectId
+      ? [entry.subjectId]
+      : [];
+
+const lockSubjectTitle = (entry: { subjectId?: string; subjectIds?: string[] }) =>
+  getLockSubjectIds(entry)
+    .map((subjectId) => subjectTitle(subjectId))
+    .join(" / ");
+
 const coverageCollapsed = (subjectId: string) =>
   collapsedCoverageSubjectIds.value.includes(subjectId);
 
@@ -340,6 +352,22 @@ const teacherLabelForMassAssignment = (subjectId: string, classIds: string[]) =>
   ];
   return labels.join(", ");
 };
+
+const lockTeacherLabelForClass = (
+  entry: { subjectId?: string; subjectIds?: string[] },
+  classId: string,
+) =>
+  getLockSubjectIds(entry)
+    .map((subjectId) => teacherLabelForSubjectClass(subjectId, classId))
+    .join(" / ");
+
+const lockTeacherLabelForMass = (
+  entry: { subjectId?: string; subjectIds?: string[] },
+  classIds: string[],
+) =>
+  getLockSubjectIds(entry)
+    .map((subjectId) => teacherLabelForMassAssignment(subjectId, classIds))
+    .join(" / ");
 
 const toggleIdInList = (current: string[], id: string) =>
   current.includes(id)
@@ -435,31 +463,33 @@ const addClassSubject = async () => {
 };
 
 const addFixed = async () => {
-  if (!newFixedClassId.value || !newFixedSubjectId.value) return;
+  if (!newFixedClassId.value || newFixedSubjectIds.value.length === 0) return;
   isAddingFixed.value = true;
   try {
     await createFixedPeriod.mutate({
       classId: newFixedClassId.value,
-      subjectId: newFixedSubjectId.value,
+      subjectIds: newFixedSubjectIds.value,
       day: Number(newFixedDay.value),
       period: Number(newFixedPeriod.value),
     });
+    newFixedSubjectIds.value = [];
   } finally {
     isAddingFixed.value = false;
   }
 };
 
 const addMass = async () => {
-  if (!newMassSubjectId.value || newMassClassIds.value.length === 0) return;
+  if (newMassSubjectIds.value.length === 0 || newMassClassIds.value.length === 0) return;
   isAddingMass.value = true;
   try {
     await createMassAssignment.mutate({
-      subjectId: newMassSubjectId.value,
+      subjectIds: newMassSubjectIds.value,
       classIds: newMassClassIds.value,
       day: Number(newMassDay.value),
       period: Number(newMassPeriod.value),
     });
     newMassClassIds.value = [];
+    newMassSubjectIds.value = [];
   } finally {
     isAddingMass.value = false;
   }
@@ -528,7 +558,7 @@ const filteredFixedLocks = computed(() => {
   const dayFilter = lockDayFilter.value;
   return (data.value?.fixedPeriods ?? []).filter((fixed) => {
     const gradeLabel = classGradeLabel(fixed.classId);
-    const subjectName = subjectTitle(fixed.subjectId);
+    const subjectName = lockSubjectTitle(fixed);
     const dayLabel = String(fixed.day);
     return (
       (!gradeTerm || normalize(gradeLabel).includes(gradeTerm)) &&
@@ -543,7 +573,7 @@ const filteredMassLocks = computed(() => {
   const subjectTerm = normalize(lockSubjectFilter.value);
   const dayFilter = lockDayFilter.value;
   return (data.value?.massAssignments ?? []).filter((mass) => {
-    const subjectName = subjectTitle(mass.subjectId);
+    const subjectName = lockSubjectTitle(mass);
     const gradeLabels = [...new Set(mass.classIds.map((id) => classGradeLabel(id)))].join(" ");
     const dayLabel = String(mass.day);
     return (
@@ -647,15 +677,22 @@ const timetable = computed(() => {
     classId: string,
     day: number,
     period: number,
-    subjectId: string,
+    subjectIds: string[],
     locked: boolean,
     action?: WarningItem["action"],
   ) => {
     const schedule = classSchedules.find((item) => item.classId === classId);
-    const subject = subjectById.get(subjectId);
-    if (!schedule || !subject || !schedule.grid[day] || period >= schedule.grid[day].length) return;
-    const teacherId = resolveTeacherForClassSubject(subjectId, classId);
-    const teacherName = teacherMap.get(teacherId)?.name ?? "Unassigned";
+    const subjects = subjectIds
+      .map((subjectId) => subjectById.get(subjectId))
+      .filter(Boolean);
+    if (!schedule || subjects.length === 0 || !schedule.grid[day] || period >= schedule.grid[day].length) return;
+
+    const teacherIds = subjectIds
+      .map((subjectId) => resolveTeacherForClassSubject(subjectId, classId))
+      .filter((teacherId): teacherId is string => Boolean(teacherId));
+    const teacherNames = subjectIds.map((subjectId) =>
+      teacherMap.get(resolveTeacherForClassSubject(subjectId, classId))?.name ?? "Unassigned",
+    );
 
     if (schedule.grid[day][period]) {
       warnings.push({
@@ -667,35 +704,52 @@ const timetable = computed(() => {
     }
 
     initTeacherUsage(day, period);
-    if (teacherId && teacherUsage[day][period].has(teacherId) && action?.type !== "mass") {
-      warnings.push({
-        id: `${teacherId}-${day}-${period}`,
-        message: `Teacher conflict for ${teacherName} on day ${day + 1} period ${period}.`,
-        action,
-      });
-      return;
+    if (action?.type !== "mass") {
+      const conflictingTeacherId = teacherIds.find((teacherId) =>
+        teacherUsage[day][period].has(teacherId),
+      );
+      if (conflictingTeacherId) {
+        warnings.push({
+          id: `${conflictingTeacherId}-${day}-${period}`,
+          message: `Teacher conflict for ${
+            teacherMap.get(conflictingTeacherId)?.name ?? "teacher"
+          } on day ${day + 1} period ${period}.`,
+          action,
+        });
+        return;
+      }
     }
 
-    schedule.grid[day][period] = { subjectName: subject.name, teacherName, locked };
-    if (teacherId) {
+    schedule.grid[day][period] = {
+      subjectName: subjects.map((subject) => subject?.name ?? "Unknown").join(" / "),
+      teacherName: teacherNames.join(" / "),
+      locked,
+    };
+    teacherIds.forEach((teacherId) => {
       teacherUsage[day][period].add(teacherId);
-    }
+    });
   };
   data.value.fixedPeriods.forEach((fixed) => {
-    place(fixed.classId, fixed.day, fixed.period, fixed.subjectId, true, {
+    const subjectIds = getLockSubjectIds(fixed);
+    place(fixed.classId, fixed.day, fixed.period, subjectIds, true, {
       type: "fixed",
       id: fixed._id,
     });
-    if (remaining[fixed.classId]?.[fixed.subjectId]) remaining[fixed.classId][fixed.subjectId] -= 1;
+    subjectIds.forEach((subjectId) => {
+      if (remaining[fixed.classId]?.[subjectId]) remaining[fixed.classId][subjectId] -= 1;
+    });
   });
 
   data.value.massAssignments.forEach((mass) => {
+    const subjectIds = getLockSubjectIds(mass);
     mass.classIds.forEach((classId) => {
-      place(classId, mass.day, mass.period, mass.subjectId, true, {
+      place(classId, mass.day, mass.period, subjectIds, true, {
         type: "mass",
         id: mass._id,
       });
-      if (remaining[classId]?.[mass.subjectId]) remaining[classId][mass.subjectId] -= 1;
+      subjectIds.forEach((subjectId) => {
+        if (remaining[classId]?.[subjectId]) remaining[classId][subjectId] -= 1;
+      });
     });
   });
 
@@ -963,10 +1017,10 @@ const resolveWarning = async (warning: WarningItem) => {
                 <h3 class="font-semibold">Mass lock</h3>
                 <p class="mt-1 text-xs text-[#8a4b32]">Use this for assemblies, games, labs, swimming, or any subject that must happen at the same time across many classes.</p>
                 <input v-model="massSubjectSearch" placeholder="Filter subjects" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
-                <select v-model="newMassSubjectId" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
-                  <option value="">Select subject</option>
-                  <option v-for="subject in filterSubjects(massSubjectSearch)" :key="subject._id" :value="subject._id">{{ subjectLabel(subject._id) }}</option>
+                <select v-model="newMassSubjectIds" multiple class="mt-3 h-32 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
+                  <option v-for="subject in filterSubjects(massSubjectSearch)" :key="subject._id" :value="subject._id">{{ subjectTitle(subject._id) }}</option>
                 </select>
+                <p class="mt-2 text-xs text-[#8a4b32]">Hold Ctrl or Cmd to select multiple subjects for the same slot.</p>
                 <div class="mt-3 grid grid-cols-2 gap-3">
                   <select v-model="newMassDay" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
                     <option v-for="day in dayOptions" :key="day.index" :value="day.index">{{ day.label }}</option>
@@ -1001,10 +1055,10 @@ const resolveWarning = async (warning: WarningItem) => {
                   <option v-for="klass in filterClassGroups(fixedClassSearch).flatMap((group) => group.classes)" :key="klass._id" :value="klass._id">{{ klass.name }}</option>
                 </select>
                 <input v-model="fixedSubjectSearch" placeholder="Filter subjects" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
-                <select v-model="newFixedSubjectId" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
-                  <option value="">Select subject</option>
-                  <option v-for="subject in filterSubjects(fixedSubjectSearch)" :key="subject._id" :value="subject._id">{{ subjectLabel(subject._id) }}</option>
+                <select v-model="newFixedSubjectIds" multiple class="mt-3 h-32 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
+                  <option v-for="subject in filterSubjects(fixedSubjectSearch)" :key="subject._id" :value="subject._id">{{ subjectTitle(subject._id) }}</option>
                 </select>
+                <p class="mt-2 text-xs text-[#8a4b32]">Hold Ctrl or Cmd to select multiple subjects for the same slot.</p>
                 <div class="mt-3 grid grid-cols-2 gap-3">
                   <select v-model="newFixedDay" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
                     <option v-for="day in dayOptions" :key="day.index" :value="day.index">{{ day.label }}</option>
@@ -1068,8 +1122,8 @@ const resolveWarning = async (warning: WarningItem) => {
               <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto">
                 <li v-for="fixed in filteredFixedLocks" :key="fixed._id" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3">
                   <p class="font-medium">{{ className(fixed.classId) }}</p>
-                  <p class="text-sm text-[#8a4b32]">{{ subjectTitle(fixed.subjectId) }}</p>
-                  <p class="mt-1 text-xs text-[#8a4b32]">{{ teacherLabelForSubjectClass(fixed.subjectId, fixed.classId) }}</p>
+                  <p class="text-sm text-[#8a4b32]">{{ lockSubjectTitle(fixed) }}</p>
+                  <p class="mt-1 text-xs text-[#8a4b32]">{{ lockTeacherLabelForClass(fixed, fixed.classId) }}</p>
                   <div class="mt-2 flex items-center justify-between text-xs text-[#8a4b32]">
                     <span>{{ dayOptions[fixed.day]?.short }} · Period {{ fixed.period }}</span>
                     <button @click="removeFixedPeriod.mutate({ id: fixed._id })" class="text-[#b96547]">Delete</button>
@@ -1081,9 +1135,9 @@ const resolveWarning = async (warning: WarningItem) => {
               <h3 class="font-medium">Mass locks</h3>
               <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto">
                 <li v-for="mass in filteredMassLocks" :key="mass._id" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3">
-                  <p class="font-medium">{{ subjectTitle(mass.subjectId) }}</p>
+                  <p class="font-medium">{{ lockSubjectTitle(mass) }}</p>
                   <p class="text-sm text-[#8a4b32]">{{ dayOptions[mass.day]?.short }} · Period {{ mass.period }}</p>
-                  <p class="mt-1 text-xs text-[#8a4b32]">{{ teacherLabelForMassAssignment(mass.subjectId, mass.classIds) }}</p>
+                  <p class="mt-1 text-xs text-[#8a4b32]">{{ lockTeacherLabelForMass(mass, mass.classIds) }}</p>
                   <p class="mt-1 text-xs text-[#8a4b32]">{{ mass.classIds.map((id) => className(id)).join(', ') }}</p>
                   <button @click="removeMassAssignment.mutate({ id: mass._id })" class="mt-2 text-xs text-[#b96547]">Delete</button>
                 </li>

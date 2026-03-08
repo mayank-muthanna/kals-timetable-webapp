@@ -28,12 +28,14 @@ export default defineSchema({
   }),
   fixedPeriods: defineTable({
     classId: v.id("classes"),
-    subjectId: v.id("subjects"),
+    subjectId: v.optional(v.id("subjects")),
+    subjectIds: v.optional(v.array(v.id("subjects"))),
     day: v.number(),
     period: v.number(),
   }),
   massAssignments: defineTable({
-    subjectId: v.id("subjects"),
+    subjectId: v.optional(v.id("subjects")),
+    subjectIds: v.optional(v.array(v.id("subjects"))),
     classIds: v.array(v.id("classes")),
     day: v.number(),
     period: v.number(),
