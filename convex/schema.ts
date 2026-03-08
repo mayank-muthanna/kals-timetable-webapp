@@ -14,7 +14,12 @@ export default defineSchema({
   }),
   subjects: defineTable({
     name: v.string(),
+    teacherId: v.optional(v.id("teachers")),
+  }),
+  subjectTeacherAssignments: defineTable({
+    subjectId: v.id("subjects"),
     teacherId: v.id("teachers"),
+    classIds: v.array(v.id("classes")),
   }),
   classSubjects: defineTable({
     classId: v.id("classes"),

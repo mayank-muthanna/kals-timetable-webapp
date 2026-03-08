@@ -2,6 +2,19 @@
 import { computed, ref } from "vue";
 import { api } from "../convex/_generated/api";
 
+type WarningItem = {
+  id: string;
+  message: string;
+  action?: { type: "fixed" | "mass"; id?: string };
+};
+
+type ClassMeta = {
+  _id: string;
+  name: string;
+  grade: number | null;
+  sortKey: string;
+};
+
 const { data } = useConvexQuery(api.timetable.getData);
 
 const createClass = useConvexMutation(api.timetable.createClass);
@@ -10,29 +23,29 @@ const createTeacher = useConvexMutation(api.timetable.createTeacher);
 const removeTeacher = useConvexMutation(api.timetable.removeTeacher);
 const createSubject = useConvexMutation(api.timetable.createSubject);
 const removeSubject = useConvexMutation(api.timetable.removeSubject);
+const createSubjectTeacherAssignment = useConvexMutation(
+  api.timetable.createSubjectTeacherAssignment,
+);
+const removeSubjectTeacherAssignment = useConvexMutation(
+  api.timetable.removeSubjectTeacherAssignment,
+);
 const createClassSubject = useConvexMutation(api.timetable.createClassSubject);
 const removeClassSubject = useConvexMutation(api.timetable.removeClassSubject);
-const updateClassSubject = useConvexMutation(api.timetable.updateClassSubject);
 const createFixedPeriod = useConvexMutation(api.timetable.createFixedPeriod);
 const removeFixedPeriod = useConvexMutation(api.timetable.removeFixedPeriod);
-const updateFixedPeriod = useConvexMutation(api.timetable.updateFixedPeriod);
-const createMassAssignment = useConvexMutation(
-  api.timetable.createMassAssignment,
-);
-const removeMassAssignment = useConvexMutation(
-  api.timetable.removeMassAssignment,
-);
-const updateMassAssignment = useConvexMutation(
-  api.timetable.updateMassAssignment,
-);
+const createMassAssignment = useConvexMutation(api.timetable.createMassAssignment);
+const removeMassAssignment = useConvexMutation(api.timetable.removeMassAssignment);
 
 const newClassName = ref("");
 const newTeacherName = ref("");
 const newSubjectName = ref("");
 const newSubjectTeacherId = ref("");
-const newClassSubjectClassIds = ref<string[]>([]);
+const newSubjectTeacherSubjectId = ref("");
+const newSubjectTeacherTeacherId = ref("");
+const newSubjectTeacherClassIds = ref<string[]>([]);
 const newClassSubjectSubjectId = ref("");
 const newClassSubjectWeeklyPeriods = ref(1);
+const newClassSubjectClassIds = ref<string[]>([]);
 const newFixedClassId = ref("");
 const newFixedSubjectId = ref("");
 const newFixedDay = ref(0);
@@ -41,21 +54,32 @@ const newMassSubjectId = ref("");
 const newMassDay = ref(0);
 const newMassPeriod = ref(1);
 const newMassClassIds = ref<string[]>([]);
+const isAddingFixed = ref(false);
+const isAddingMass = ref(false);
 
-const editingClassSubjectId = ref<string | null>(null);
-const editClassSubjectClassId = ref("");
-const editClassSubjectSubjectId = ref("");
-const editClassSubjectWeeklyPeriods = ref(1);
-const editingFixedId = ref<string | null>(null);
-const editFixedClassId = ref("");
-const editFixedSubjectId = ref("");
-const editFixedDay = ref(0);
-const editFixedPeriod = ref(1);
-const editingMassId = ref<string | null>(null);
-const editMassSubjectId = ref("");
-const editMassDay = ref(0);
-const editMassPeriod = ref(1);
-const editMassClassIds = ref<string[]>([]);
+const classSearch = ref("");
+const teacherSearch = ref("");
+const teacherPickerSearch = ref("");
+const teacherCoverageTeacherSearch = ref("");
+const subjectSearch = ref("");
+const essentialSubjectSearch = ref("");
+const teacherCoverageSubjectSearch = ref("");
+const teacherCoverageClassSearch = ref("");
+const classGroupSearch = ref("");
+const allocationGradeFilter = ref("");
+const allocationClassFilter = ref("");
+const allocationSubjectFilter = ref("");
+const allocationTeacherFilter = ref("");
+const allocationGroupBy = ref<"grade" | "class" | "subject" | "teacher">("grade");
+const fixedClassSearch = ref("");
+const fixedSubjectSearch = ref("");
+const massSubjectSearch = ref("");
+const massClassSearch = ref("");
+const lockGradeFilter = ref("");
+const lockSubjectFilter = ref("");
+const lockDayFilter = ref("all");
+const timetableSearch = ref("");
+const collapsedCoverageSubjectIds = ref<string[]>([]);
 
 const dayOptions = [
   { label: "Monday", short: "Mon", index: 0, periods: 8 },
@@ -66,39 +90,291 @@ const dayOptions = [
   { label: "Saturday", short: "Sat", index: 5, periods: 5 },
 ];
 
-const resetMassSelection = () => {
-  newMassClassIds.value = [];
+const normalize = (value: string) => value.trim().toLowerCase();
+const compare = (a: string, b: string) =>
+  a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+
+const parseClass = (name: string) => {
+  const match = name.trim().match(/^(\d+)/);
+  const grade = match ? Number(match[1]) : null;
+  const rest = match ? name.trim().slice(match[0].length).trim() : name.trim();
+  return {
+    grade,
+    sortKey:
+      grade === null
+        ? `z-${name.toLowerCase()}`
+        : `${String(grade).padStart(2, "0")}-${rest.toLowerCase()}`,
+  };
 };
 
-const resetClassSubjectSelection = () => {
-  newClassSubjectClassIds.value = [];
+const teacherById = computed(
+  () => new Map((data.value?.teachers ?? []).map((teacher) => [teacher._id, teacher])),
+);
+
+const sortedClasses = computed<ClassMeta[]>(() =>
+  [...(data.value?.classes ?? [])]
+    .map((klass) => {
+      const meta = parseClass(klass.name);
+      return {
+        _id: klass._id,
+        name: klass.name,
+        grade: meta.grade,
+        sortKey: meta.sortKey,
+      };
+    })
+    .sort((a, b) => compare(a.sortKey, b.sortKey)),
+);
+
+const sortedTeachers = computed(() =>
+  [...(data.value?.teachers ?? [])].sort((a, b) => compare(a.name, b.name)),
+);
+
+const subjectTeacherAssignmentsBySubject = computed(() => {
+  const map = new Map<
+    string,
+    Array<{
+      _id: string;
+      subjectId: string;
+      teacherId: string;
+      classIds: string[];
+    }>
+  >();
+
+  (data.value?.subjectTeacherAssignments ?? []).forEach((assignment) => {
+    if (!map.has(assignment.subjectId)) {
+      map.set(assignment.subjectId, []);
+    }
+    map.get(assignment.subjectId)?.push(assignment);
+  });
+
+  return map;
+});
+
+const subjectMeta = computed(() => {
+  const map = new Map<
+    string,
+    {
+      label: string;
+      teacherName: string;
+      classCount: number;
+      weeklyPeriods: number;
+      assignmentCount: number;
+    }
+  >();
+  const classCount = new Map<string, Set<string>>();
+
+  (data.value?.classSubjects ?? []).forEach((item) => {
+    if (!classCount.has(item.subjectId)) classCount.set(item.subjectId, new Set());
+    classCount.get(item.subjectId)?.add(item.classId);
+  });
+
+  (data.value?.subjects ?? []).forEach((subject) => {
+    const teacherName = teacherById.value.get(subject.teacherId)?.name ?? "Unassigned";
+    const assignmentCount =
+      subjectTeacherAssignmentsBySubject.value.get(subject._id)?.length ?? 0;
+    map.set(subject._id, {
+      label:
+        assignmentCount > 0
+          ? `${subject.name} · ${assignmentCount} teacher group${
+              assignmentCount === 1 ? "" : "s"
+            }`
+          : subject.name,
+      teacherName,
+      classCount: classCount.get(subject._id)?.size ?? 0,
+      weeklyPeriods: 0,
+      assignmentCount,
+    });
+  });
+
+  (data.value?.classSubjects ?? []).forEach((item) => {
+    const entry = map.get(item.subjectId);
+    if (entry) entry.weeklyPeriods += item.weeklyPeriods;
+  });
+
+  return map;
+});
+const sortedSubjects = computed(() =>
+  [...(data.value?.subjects ?? [])].sort((a, b) =>
+    compare(subjectMeta.value.get(a._id)?.label ?? a.name, subjectMeta.value.get(b._id)?.label ?? b.name),
+  ),
+);
+
+const groupedSubjects = computed(() => {
+  const groups = new Map<string, { name: string; items: typeof sortedSubjects.value }>();
+  sortedSubjects.value.forEach((subject) => {
+    const key = normalize(subject.name);
+    if (!groups.has(key)) groups.set(key, { name: subject.name, items: [] });
+    groups.get(key)?.items.push(subject);
+  });
+
+  const term = normalize(subjectSearch.value);
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((subject) => {
+        const meta = subjectMeta.value.get(subject._id);
+        return (
+          !term ||
+          normalize(group.name).includes(term) ||
+          normalize(meta?.teacherName ?? "").includes(term) ||
+          normalize(meta?.label ?? "").includes(term)
+        );
+      }),
+    }))
+    .filter((group) => group.items.length > 0);
+});
+
+const teacherAssignmentsForSubject = (subjectId: string) =>
+  subjectTeacherAssignmentsBySubject.value.get(subjectId) ?? [];
+
+const groupedClasses = computed(() => {
+  const groups = new Map<string, { label: string; classes: ClassMeta[] }>();
+  sortedClasses.value.forEach((klass) => {
+    const key = klass.grade === null ? "other" : `grade-${klass.grade}`;
+    const label = klass.grade === null ? "Unsorted" : `Grade ${klass.grade}`;
+    if (!groups.has(key)) groups.set(key, { label, classes: [] });
+    groups.get(key)?.classes.push(klass);
+  });
+  return [...groups.values()];
+});
+
+const filterClassGroups = (search: string) => {
+  const term = normalize(search);
+  return groupedClasses.value
+    .map((group) => ({
+      ...group,
+      classes: group.classes.filter(
+        (klass) =>
+          !term ||
+          normalize(klass.name).includes(term) ||
+          normalize(group.label).includes(term),
+      ),
+    }))
+    .filter((group) => group.classes.length > 0);
 };
 
-const toggleClassSubjectClass = (classId: string) => {
-  if (newClassSubjectClassIds.value.includes(classId)) {
-    newClassSubjectClassIds.value = newClassSubjectClassIds.value.filter(
-      (id) => id !== classId,
+const classList = computed(() =>
+  sortedClasses.value.filter((klass) =>
+    !normalize(classSearch.value) || normalize(klass.name).includes(normalize(classSearch.value)),
+  ),
+);
+
+const teacherList = computed(() =>
+  sortedTeachers.value.filter((teacher) =>
+    !normalize(teacherSearch.value) || normalize(teacher.name).includes(normalize(teacherSearch.value)),
+  ),
+);
+
+const teacherOptions = computed(() =>
+  sortedTeachers.value.filter((teacher) =>
+    !normalize(teacherPickerSearch.value) ||
+    normalize(teacher.name).includes(normalize(teacherPickerSearch.value)),
+  ),
+);
+
+const teacherCoverageOptions = computed(() =>
+  sortedTeachers.value.filter((teacher) =>
+    !normalize(teacherCoverageTeacherSearch.value) ||
+    normalize(teacher.name).includes(normalize(teacherCoverageTeacherSearch.value)),
+  ),
+);
+
+const filterSubjects = (search: string) =>
+  sortedSubjects.value.filter((subject) => {
+    const meta = subjectMeta.value.get(subject._id);
+    const term = normalize(search);
+    return (
+      !term ||
+      normalize(subject.name).includes(term) ||
+      normalize(meta?.teacherName ?? "").includes(term) ||
+      normalize(meta?.label ?? "").includes(term)
     );
-  } else {
-    newClassSubjectClassIds.value = [...newClassSubjectClassIds.value, classId];
+  });
+
+const className = (id: string) =>
+  sortedClasses.value.find((klass) => klass._id === id)?.name ?? "Unknown";
+
+const subjectLabel = (id: string) => subjectMeta.value.get(id)?.label ?? "Unknown subject";
+
+const subjectTitle = (id: string) =>
+  sortedSubjects.value.find((subject) => subject._id === id)?.name ?? "Unknown subject";
+
+const coverageCollapsed = (subjectId: string) =>
+  collapsedCoverageSubjectIds.value.includes(subjectId);
+
+const toggleCoverageCollapse = (subjectId: string) => {
+  collapsedCoverageSubjectIds.value = collapsedCoverageSubjectIds.value.includes(subjectId)
+    ? collapsedCoverageSubjectIds.value.filter((id) => id !== subjectId)
+    : [...collapsedCoverageSubjectIds.value, subjectId];
+};
+
+const classGradeLabel = (classId: string) => {
+  const klass = sortedClasses.value.find((item) => item._id === classId);
+  if (!klass) return "Unknown grade";
+  return klass.grade === null ? "Unsorted" : `Grade ${klass.grade}`;
+};
+
+const teacherLabelForSubjectClass = (subjectId: string, classId: string) => {
+  const matches = teacherAssignmentsForSubject(subjectId).filter((assignment) =>
+    assignment.classIds.includes(classId),
+  );
+
+  if (matches.length > 0) {
+    return matches
+      .map((assignment) => teacherById.value.get(assignment.teacherId)?.name ?? "Unknown")
+      .join(", ");
   }
+
+  const fallbackTeacherId = sortedSubjects.value.find(
+    (subject) => subject._id === subjectId,
+  )?.teacherId;
+
+  return fallbackTeacherId
+    ? teacherById.value.get(fallbackTeacherId)?.name ?? "Unassigned"
+    : "No teacher coverage";
 };
 
-const selectAllClassSubjects = () => {
-  newClassSubjectClassIds.value =
-    data.value?.classes.map((klass) => klass._id) ?? [];
+const teacherLabelForMassAssignment = (subjectId: string, classIds: string[]) => {
+  const labels = [
+    ...new Set(classIds.map((classId) => teacherLabelForSubjectClass(subjectId, classId))),
+  ];
+  return labels.join(", ");
 };
 
-const clearClassSubjects = () => {
-  newClassSubjectClassIds.value = [];
+const toggleIdInList = (current: string[], id: string) =>
+  current.includes(id)
+    ? current.filter((item) => item !== id)
+    : [...current, id];
+
+const toggleGroupInList = (current: string[], ids: string[]) => {
+  const allSelected = ids.every((id) => current.includes(id));
+  return allSelected
+    ? current.filter((id) => !ids.includes(id))
+    : [...new Set([...current, ...ids])];
 };
 
-const selectAllMassClasses = () => {
-  newMassClassIds.value = data.value?.classes.map((klass) => klass._id) ?? [];
+const toggleCoverageClass = (id: string) => {
+  newSubjectTeacherClassIds.value = toggleIdInList(newSubjectTeacherClassIds.value, id);
 };
 
-const clearMassClasses = () => {
-  newMassClassIds.value = [];
+const toggleCoverageGrade = (ids: string[]) => {
+  newSubjectTeacherClassIds.value = toggleGroupInList(newSubjectTeacherClassIds.value, ids);
+};
+
+const toggleMassClass = (id: string) => {
+  newMassClassIds.value = toggleIdInList(newMassClassIds.value, id);
+};
+
+const toggleMassGrade = (ids: string[]) => {
+  newMassClassIds.value = toggleGroupInList(newMassClassIds.value, ids);
+};
+
+const toggleEssentialClass = (id: string) => {
+  newClassSubjectClassIds.value = toggleIdInList(newClassSubjectClassIds.value, id);
+};
+
+const toggleEssentialGrade = (ids: string[]) => {
+  newClassSubjectClassIds.value = toggleGroupInList(newClassSubjectClassIds.value, ids);
 };
 
 const addClass = async () => {
@@ -114,1322 +390,814 @@ const addTeacher = async () => {
 };
 
 const addSubject = async () => {
-  if (!newSubjectName.value.trim() || !newSubjectTeacherId.value) return;
+  if (!newSubjectName.value.trim()) return;
   await createSubject.mutate({
     name: newSubjectName.value.trim(),
-    teacherId: newSubjectTeacherId.value,
+    teacherId: newSubjectTeacherId.value || undefined,
   });
   newSubjectName.value = "";
   newSubjectTeacherId.value = "";
 };
 
-const addClassSubject = async () => {
+const addSubjectTeacherCoverage = async () => {
   if (
-    newClassSubjectClassIds.value.length === 0 ||
-    !newClassSubjectSubjectId.value
+    !newSubjectTeacherSubjectId.value ||
+    !newSubjectTeacherTeacherId.value ||
+    newSubjectTeacherClassIds.value.length === 0
   ) {
     return;
   }
-  const weeklyPeriods = Number(newClassSubjectWeeklyPeriods.value) || 1;
+
+  await createSubjectTeacherAssignment.mutate({
+    subjectId: newSubjectTeacherSubjectId.value,
+    teacherId: newSubjectTeacherTeacherId.value,
+    classIds: newSubjectTeacherClassIds.value,
+  });
+
+  newSubjectTeacherSubjectId.value = "";
+  newSubjectTeacherTeacherId.value = "";
+  newSubjectTeacherClassIds.value = [];
+};
+
+const addClassSubject = async () => {
+  if (!newClassSubjectSubjectId.value || newClassSubjectClassIds.value.length === 0) return;
   await Promise.all(
     newClassSubjectClassIds.value.map((classId) =>
       createClassSubject.mutate({
         classId,
         subjectId: newClassSubjectSubjectId.value,
-        weeklyPeriods,
+        weeklyPeriods: Number(newClassSubjectWeeklyPeriods.value) || 1,
       }),
     ),
   );
+  newClassSubjectClassIds.value = [];
   newClassSubjectWeeklyPeriods.value = 1;
-  resetClassSubjectSelection();
 };
 
-const addFixedPeriod = async () => {
+const addFixed = async () => {
   if (!newFixedClassId.value || !newFixedSubjectId.value) return;
-  await createFixedPeriod.mutate({
-    classId: newFixedClassId.value,
-    subjectId: newFixedSubjectId.value,
-    day: Number(newFixedDay.value),
-    period: Number(newFixedPeriod.value),
-  });
-  newFixedDay.value = 0;
-  newFixedPeriod.value = 1;
-};
-
-const addMassAssignment = async () => {
-  if (!newMassSubjectId.value || newMassClassIds.value.length === 0) return;
-  await createMassAssignment.mutate({
-    subjectId: newMassSubjectId.value,
-    classIds: newMassClassIds.value,
-    day: Number(newMassDay.value),
-    period: Number(newMassPeriod.value),
-  });
-  newMassDay.value = 0;
-  newMassPeriod.value = 1;
-  resetMassSelection();
-};
-
-const startEditClassSubject = (allocation: {
-  _id: string;
-  classId: string;
-  subjectId: string;
-  weeklyPeriods: number;
-}) => {
-  editingClassSubjectId.value = allocation._id;
-  editClassSubjectClassId.value = allocation.classId;
-  editClassSubjectSubjectId.value = allocation.subjectId;
-  editClassSubjectWeeklyPeriods.value = allocation.weeklyPeriods;
-};
-
-const cancelEditClassSubject = () => {
-  editingClassSubjectId.value = null;
-};
-
-const saveClassSubjectEdit = async () => {
-  if (!editingClassSubjectId.value) return;
-  await updateClassSubject.mutate({
-    id: editingClassSubjectId.value,
-    classId: editClassSubjectClassId.value,
-    subjectId: editClassSubjectSubjectId.value,
-    weeklyPeriods: Number(editClassSubjectWeeklyPeriods.value) || 1,
-  });
-  editingClassSubjectId.value = null;
-};
-
-const startEditFixed = (fixed: {
-  _id: string;
-  classId: string;
-  subjectId: string;
-  day: number;
-  period: number;
-}) => {
-  editingFixedId.value = fixed._id;
-  editFixedClassId.value = fixed.classId;
-  editFixedSubjectId.value = fixed.subjectId;
-  editFixedDay.value = fixed.day;
-  editFixedPeriod.value = fixed.period;
-};
-
-const cancelEditFixed = () => {
-  editingFixedId.value = null;
-};
-
-const saveFixedEdit = async () => {
-  if (!editingFixedId.value) return;
-  await updateFixedPeriod.mutate({
-    id: editingFixedId.value,
-    classId: editFixedClassId.value,
-    subjectId: editFixedSubjectId.value,
-    day: Number(editFixedDay.value),
-    period: Number(editFixedPeriod.value),
-  });
-  editingFixedId.value = null;
-};
-
-const startEditMass = (mass: {
-  _id: string;
-  subjectId: string;
-  classIds: string[];
-  day: number;
-  period: number;
-}) => {
-  editingMassId.value = mass._id;
-  editMassSubjectId.value = mass.subjectId;
-  editMassClassIds.value = [...mass.classIds];
-  editMassDay.value = mass.day;
-  editMassPeriod.value = mass.period;
-};
-
-const cancelEditMass = () => {
-  editingMassId.value = null;
-};
-
-const saveMassEdit = async () => {
-  if (!editingMassId.value) return;
-  await updateMassAssignment.mutate({
-    id: editingMassId.value,
-    subjectId: editMassSubjectId.value,
-    classIds: editMassClassIds.value,
-    day: Number(editMassDay.value),
-    period: Number(editMassPeriod.value),
-  });
-  editingMassId.value = null;
-};
-
-const toggleEditMassClass = (classId: string) => {
-  if (editMassClassIds.value.includes(classId)) {
-    editMassClassIds.value = editMassClassIds.value.filter(
-      (id) => id !== classId,
-    );
-  } else {
-    editMassClassIds.value = [...editMassClassIds.value, classId];
+  isAddingFixed.value = true;
+  try {
+    await createFixedPeriod.mutate({
+      classId: newFixedClassId.value,
+      subjectId: newFixedSubjectId.value,
+      day: Number(newFixedDay.value),
+      period: Number(newFixedPeriod.value),
+    });
+  } finally {
+    isAddingFixed.value = false;
   }
 };
+
+const addMass = async () => {
+  if (!newMassSubjectId.value || newMassClassIds.value.length === 0) return;
+  isAddingMass.value = true;
+  try {
+    await createMassAssignment.mutate({
+      subjectId: newMassSubjectId.value,
+      classIds: newMassClassIds.value,
+      day: Number(newMassDay.value),
+      period: Number(newMassPeriod.value),
+    });
+    newMassClassIds.value = [];
+  } finally {
+    isAddingMass.value = false;
+  }
+};
+
+const filteredEssentialAllocations = computed(() => {
+  const gradeTerm = normalize(allocationGradeFilter.value);
+  const classTerm = normalize(allocationClassFilter.value);
+  const subjectTerm = normalize(allocationSubjectFilter.value);
+  const teacherTerm = normalize(allocationTeacherFilter.value);
+
+  return (data.value?.classSubjects ?? [])
+    .map((allocation) => ({
+      ...allocation,
+      className: className(allocation.classId),
+      gradeLabel: classGradeLabel(allocation.classId),
+      subjectName: subjectTitle(allocation.subjectId),
+      teacherName: teacherLabelForSubjectClass(allocation.subjectId, allocation.classId),
+    }))
+    .filter((allocation) => {
+      return (
+        (!gradeTerm || normalize(allocation.gradeLabel).includes(gradeTerm)) &&
+        (!classTerm || normalize(allocation.className).includes(classTerm)) &&
+        (!subjectTerm || normalize(allocation.subjectName).includes(subjectTerm)) &&
+        (!teacherTerm || normalize(allocation.teacherName).includes(teacherTerm))
+      );
+    });
+});
+
+const groupedEssentialAllocations = computed(() => {
+  const groups = new Map<string, typeof filteredEssentialAllocations.value>();
+
+  filteredEssentialAllocations.value.forEach((allocation) => {
+    const key =
+      allocationGroupBy.value === "grade"
+        ? allocation.gradeLabel
+        : allocationGroupBy.value === "class"
+          ? allocation.className
+          : allocationGroupBy.value === "subject"
+            ? allocation.subjectName
+            : allocation.teacherName;
+
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+
+    groups.get(key)?.push(allocation);
+  });
+
+  return [...groups.entries()]
+    .map(([label, items]) => ({
+      label,
+      items: [...items].sort((left, right) => {
+        if (allocationGroupBy.value === "class") {
+          return compare(left.subjectName, right.subjectName);
+        }
+        return compare(left.className, right.className);
+      }),
+    }))
+    .sort((left, right) => compare(left.label, right.label));
+});
+
+const filteredFixedLocks = computed(() => {
+  const gradeTerm = normalize(lockGradeFilter.value);
+  const subjectTerm = normalize(lockSubjectFilter.value);
+  const dayFilter = lockDayFilter.value;
+  return (data.value?.fixedPeriods ?? []).filter((fixed) => {
+    const gradeLabel = classGradeLabel(fixed.classId);
+    const subjectName = subjectTitle(fixed.subjectId);
+    const dayLabel = String(fixed.day);
+    return (
+      (!gradeTerm || normalize(gradeLabel).includes(gradeTerm)) &&
+      (!subjectTerm || normalize(subjectName).includes(subjectTerm)) &&
+      (dayFilter === "all" || dayLabel === dayFilter)
+    );
+  });
+});
+
+const filteredMassLocks = computed(() => {
+  const gradeTerm = normalize(lockGradeFilter.value);
+  const subjectTerm = normalize(lockSubjectFilter.value);
+  const dayFilter = lockDayFilter.value;
+  return (data.value?.massAssignments ?? []).filter((mass) => {
+    const subjectName = subjectTitle(mass.subjectId);
+    const gradeLabels = [...new Set(mass.classIds.map((id) => classGradeLabel(id)))].join(" ");
+    const dayLabel = String(mass.day);
+    return (
+      (!gradeTerm || normalize(gradeLabels).includes(gradeTerm)) &&
+      (!subjectTerm || normalize(subjectName).includes(subjectTerm)) &&
+      (dayFilter === "all" || dayLabel === dayFilter)
+    );
+  });
+});
 
 const timetable = computed(() => {
-  if (!data.value) {
-    return { classSchedules: [], warnings: [] as WarningItem[] };
-  }
+  if (!data.value) return { classSchedules: [], warnings: [] as WarningItem[] };
 
-  const {
-    classes,
-    subjects,
-    teachers,
-    classSubjects,
-    fixedPeriods,
-    massAssignments,
-  } = data.value;
-  const subjectById = new Map(
-    subjects.map((subject) => [subject._id, subject]),
+  const subjectById = new Map(data.value.subjects.map((subject) => [subject._id, subject]));
+  const teacherMap = new Map(data.value.teachers.map((teacher) => [teacher._id, teacher]));
+  const assignmentBySubject = new Map(
+    (data.value.subjectTeacherAssignments ?? []).reduce<
+      Array<[string, Array<{ teacherId: string; classIds: string[] }>]>
+    >((entries, assignment) => {
+      const existing = entries.find(([subjectId]) => subjectId === assignment.subjectId);
+      if (existing) {
+        existing[1].push({
+          teacherId: assignment.teacherId,
+          classIds: assignment.classIds,
+        });
+      } else {
+        entries.push([
+          assignment.subjectId,
+          [{ teacherId: assignment.teacherId, classIds: assignment.classIds }],
+        ]);
+      }
+      return entries;
+    }, []),
   );
-  const teacherById = new Map(
-    teachers.map((teacher) => [teacher._id, teacher]),
-  );
-
   const teacherUsage: Record<number, Record<number, Set<string>>> = {};
   const remaining: Record<string, Record<string, number>> = {};
   const warnings: WarningItem[] = [];
+  const teacherWarningKeys = new Set<string>();
 
   const initTeacherUsage = (day: number, period: number) => {
     if (!teacherUsage[day]) teacherUsage[day] = {};
     if (!teacherUsage[day][period]) teacherUsage[day][period] = new Set();
   };
 
-  const classSchedules = classes.map((klass) => {
-    const grid = dayOptions.map((day) => {
-      return Array.from(
-        { length: day.periods + 1 },
-        () =>
-          null as null | {
-            subjectId: string;
-            subjectName: string;
-            teacherName: string;
-            locked: boolean;
-            source: string;
-          },
-      );
-    });
-    return { classId: klass._id, className: klass.name, grid };
+  const classSchedules = [...sortedClasses.value].map((klass) => ({
+    classId: klass._id,
+    className: klass.name,
+    grid: dayOptions.map((day) =>
+      Array.from({ length: day.periods + 1 }, () => null as null | {
+        subjectName: string;
+        teacherName: string;
+        locked: boolean;
+      }),
+    ),
+  }));
+
+  data.value.classSubjects.forEach((item) => {
+    if (!remaining[item.classId]) remaining[item.classId] = {};
+    remaining[item.classId][item.subjectId] = (remaining[item.classId][item.subjectId] || 0) + item.weeklyPeriods;
   });
 
-  for (const classSubject of classSubjects) {
-    if (!remaining[classSubject.classId]) remaining[classSubject.classId] = {};
-    remaining[classSubject.classId][classSubject.subjectId] =
-      (remaining[classSubject.classId][classSubject.subjectId] || 0) +
-      classSubject.weeklyPeriods;
-  }
+  const resolveTeacherForClassSubject = (subjectId: string, classId: string) => {
+    const subject = subjectById.get(subjectId);
+    const matches =
+      assignmentBySubject
+        .get(subjectId)
+        ?.filter((assignment) => assignment.classIds.includes(classId)) ?? [];
 
-  const placeEntry = ({
-    classId,
-    day,
-    period,
-    subjectId,
-    locked,
-    source,
-    assignmentId,
-  }: {
-    classId: string;
-    day: number;
-    period: number;
-    subjectId: string;
-    locked: boolean;
-    source: string;
-    assignmentId?: string;
-  }) => {
+    if (matches.length > 1) {
+      const key = `${subjectId}-${classId}-multiple`;
+      if (!teacherWarningKeys.has(key)) {
+        teacherWarningKeys.add(key);
+        warnings.push({
+          id: key,
+          message: `Multiple teacher mappings found for ${subject?.name ?? "subject"} in ${className(classId)}.`,
+        });
+      }
+    }
+
+    if (matches[0]?.teacherId) {
+      return matches[0].teacherId;
+    }
+
+    if (subject?.teacherId) {
+      return subject.teacherId;
+    }
+
+    const key = `${subjectId}-${classId}-missing`;
+    if (!teacherWarningKeys.has(key)) {
+      teacherWarningKeys.add(key);
+      warnings.push({
+        id: key,
+        message: `No teacher mapping set for ${subject?.name ?? "subject"} in ${className(classId)}.`,
+      });
+    }
+
+    return undefined;
+  };
+
+  const place = (
+    classId: string,
+    day: number,
+    period: number,
+    subjectId: string,
+    locked: boolean,
+    action?: WarningItem["action"],
+  ) => {
     const schedule = classSchedules.find((item) => item.classId === classId);
     const subject = subjectById.get(subjectId);
-    if (!schedule || !subject) return;
-
-    const teacher = teacherById.get(subject.teacherId);
-    const teacherName = teacher?.name ?? "Unassigned";
-
-    if (!schedule.grid[day] || period >= schedule.grid[day].length) {
-      warnings.push({
-        id: `${classId}-${day}-${period}-invalid`,
-        message: `Invalid slot for class ${schedule.className} on day ${
-          day + 1
-        } period ${period}.`,
-      });
-      return;
-    }
+    if (!schedule || !subject || !schedule.grid[day] || period >= schedule.grid[day].length) return;
+    const teacherId = resolveTeacherForClassSubject(subjectId, classId);
+    const teacherName = teacherMap.get(teacherId)?.name ?? "Unassigned";
 
     if (schedule.grid[day][period]) {
       warnings.push({
         id: `${classId}-${day}-${period}-slot`,
-        message: `Slot conflict for class ${schedule.className} on day ${
-          day + 1
-        } period ${period}.`,
-        action:
-          source === "fixed"
-            ? {
-                type: "fixed",
-                id: assignmentId,
-              }
-            : source === "mass"
-              ? {
-                  type: "mass",
-                  id: assignmentId,
-                }
-              : undefined,
+        message: `Slot conflict for ${schedule.className} on day ${day + 1} period ${period}.`,
+        action,
       });
       return;
     }
 
     initTeacherUsage(day, period);
-    if (
-      teacher &&
-      teacherUsage[day][period].has(teacher._id) &&
-      source !== "mass"
-    ) {
+    if (teacherId && teacherUsage[day][period].has(teacherId) && action?.type !== "mass") {
       warnings.push({
-        id: `${teacher._id}-${day}-${period}-teacher`,
-        message: `Teacher conflict: ${teacherName} already scheduled on day ${
-          day + 1
-        } period ${period}.`,
-        action:
-          source === "fixed"
-            ? {
-                type: "fixed",
-                id: assignmentId,
-              }
-            : source === "mass"
-              ? {
-                  type: "mass",
-                  id: assignmentId,
-                }
-              : undefined,
+        id: `${teacherId}-${day}-${period}`,
+        message: `Teacher conflict for ${teacherName} on day ${day + 1} period ${period}.`,
+        action,
       });
       return;
     }
 
-    schedule.grid[day][period] = {
-      subjectId,
-      subjectName: subject.name,
-      teacherName,
-      locked,
-      source,
-    };
-
-    if (teacher) {
-      teacherUsage[day][period].add(teacher._id);
+    schedule.grid[day][period] = { subjectName: subject.name, teacherName, locked };
+    if (teacherId) {
+      teacherUsage[day][period].add(teacherId);
     }
   };
-
-  for (const fixed of fixedPeriods) {
-    placeEntry({
-      classId: fixed.classId,
-      day: fixed.day,
-      period: fixed.period,
-      subjectId: fixed.subjectId,
-      locked: true,
-      source: "fixed",
-      assignmentId: fixed._id,
+  data.value.fixedPeriods.forEach((fixed) => {
+    place(fixed.classId, fixed.day, fixed.period, fixed.subjectId, true, {
+      type: "fixed",
+      id: fixed._id,
     });
+    if (remaining[fixed.classId]?.[fixed.subjectId]) remaining[fixed.classId][fixed.subjectId] -= 1;
+  });
 
-    if (!remaining[fixed.classId]?.[fixed.subjectId]) {
-      warnings.push({
-        id: `fixed-${fixed._id}-allocation`,
-        message: `Fixed period for class ${
-          classes.find((item) => item._id === fixed.classId)?.name ?? "Unknown"
-        } uses subject without remaining allocation.`,
-        action: {
-          type: "fixed",
-          id: fixed._id,
-        },
+  data.value.massAssignments.forEach((mass) => {
+    mass.classIds.forEach((classId) => {
+      place(classId, mass.day, mass.period, mass.subjectId, true, {
+        type: "mass",
+        id: mass._id,
       });
-    } else {
-      remaining[fixed.classId][fixed.subjectId] -= 1;
-    }
-  }
+      if (remaining[classId]?.[mass.subjectId]) remaining[classId][mass.subjectId] -= 1;
+    });
+  });
 
-  for (const mass of massAssignments) {
-    for (const classId of mass.classIds) {
-      placeEntry({
-        classId,
-        day: mass.day,
-        period: mass.period,
-        subjectId: mass.subjectId,
-        locked: true,
-        source: "mass",
-        assignmentId: mass._id,
-      });
-      if (remaining[classId]?.[mass.subjectId]) {
-        remaining[classId][mass.subjectId] -= 1;
-      }
-    }
-  }
-
-  for (const schedule of classSchedules) {
+  classSchedules.forEach((schedule) => {
     const classRemaining = remaining[schedule.classId] ?? {};
     const subjectIds = Object.keys(classRemaining);
-
     dayOptions.forEach((day, dayIndex) => {
-      const subjectsInDay = new Set<string>();
-      schedule.grid[dayIndex].forEach((entry) => {
-        if (entry?.subjectId) {
-          subjectsInDay.add(entry.subjectId);
-        }
-      });
-
+      const usedToday = new Set<string>();
       for (let period = 1; period <= day.periods; period += 1) {
         if (schedule.grid[dayIndex][period]) continue;
-
-        const available = subjectIds.filter((subjectId) => {
-          const count = classRemaining[subjectId] || 0;
-          if (count <= 0) return false;
-          const subject = subjectById.get(subjectId);
-          if (!subject) return false;
+        const candidates = subjectIds.filter((subjectId) => {
+          if ((classRemaining[subjectId] || 0) <= 0) return false;
+          const teacherId = resolveTeacherForClassSubject(subjectId, schedule.classId);
+          if (!teacherId) return true;
           initTeacherUsage(dayIndex, period);
-          const teacherId = subject.teacherId;
-          if (teacherUsage[dayIndex][period].has(teacherId)) return false;
-          return true;
+          return !teacherUsage[dayIndex][period].has(teacherId);
         });
-
-        const nonRepeat = available.filter(
-          (subjectId) => !subjectsInDay.has(subjectId),
-        );
-        const candidates = nonRepeat.length > 0 ? nonRepeat : available;
-
-        if (candidates.length === 0) {
+        const choice =
+          candidates.find((subjectId) => !usedToday.has(subjectId)) ?? candidates[0];
+        if (!choice) {
           warnings.push({
             id: `${schedule.classId}-${dayIndex}-${period}-unfilled`,
-            message: `Unfilled slot for class ${schedule.className} on day ${
-              dayIndex + 1
-            } period ${period}.`,
+            message: `Unfilled slot for ${schedule.className} on day ${dayIndex + 1} period ${period}.`,
           });
           continue;
         }
-
-        candidates.sort(
-          (a, b) => (classRemaining[b] || 0) - (classRemaining[a] || 0),
-        );
-        const chosen = candidates[0];
-        const subject = subjectById.get(chosen);
+        const subject = subjectById.get(choice);
         if (!subject) continue;
-
         schedule.grid[dayIndex][period] = {
-          subjectId: chosen,
           subjectName: subject.name,
-          teacherName: teacherById.get(subject.teacherId)?.name ?? "Unassigned",
+          teacherName:
+            teacherMap.get(resolveTeacherForClassSubject(choice, schedule.classId))?.name ??
+            "Unassigned",
           locked: false,
-          source: "auto",
         };
-        classRemaining[chosen] -= 1;
-        subjectsInDay.add(chosen);
-        initTeacherUsage(dayIndex, period);
-        teacherUsage[dayIndex][period].add(subject.teacherId);
+        classRemaining[choice] -= 1;
+        usedToday.add(choice);
+        const teacherId = resolveTeacherForClassSubject(choice, schedule.classId);
+        if (teacherId) {
+          teacherUsage[dayIndex][period].add(teacherId);
+        }
       }
     });
-  }
+  });
 
-  for (const schedule of classSchedules) {
-    const classRemaining = remaining[schedule.classId] ?? {};
-    Object.entries(classRemaining).forEach(([subjectId, count]) => {
+  Object.entries(remaining).forEach(([classId, subjectCounts]) => {
+    Object.entries(subjectCounts).forEach(([subjectId, count]) => {
       if (count > 0) {
-        const subject = subjectById.get(subjectId);
         warnings.push({
-          id: `${schedule.classId}-${subjectId}-remaining`,
-          message: `Remaining ${count} periods for ${
-            subject?.name ?? "Unknown subject"
-          } in class ${schedule.className}.`,
+          id: `${classId}-${subjectId}-remaining`,
+          message: `Remaining ${count} periods for ${subjectById.get(subjectId)?.name ?? "Unknown"} in ${className(classId)}.`,
         });
       }
     });
-  }
+  });
 
   return { classSchedules, warnings };
 });
 
-const toggleMassClass = (classId: string) => {
-  if (newMassClassIds.value.includes(classId)) {
-    newMassClassIds.value = newMassClassIds.value.filter(
-      (id) => id !== classId,
-    );
-  } else {
-    newMassClassIds.value = [...newMassClassIds.value, classId];
-  }
-};
-
-type WarningItem = {
-  id: string;
-  message: string;
-  action?: {
-    type: "fixed" | "mass";
-    id?: string;
-  };
-};
+const visibleSchedules = computed(() =>
+  timetable.value.classSchedules.filter(
+    (schedule) =>
+      !normalize(timetableSearch.value) ||
+      normalize(schedule.className).includes(normalize(timetableSearch.value)),
+  ),
+);
 
 const resolveWarning = async (warning: WarningItem) => {
   if (!warning.action?.id) return;
   if (warning.action.type === "fixed") {
     await removeFixedPeriod.mutate({ id: warning.action.id });
-  } else if (warning.action.type === "mass") {
+  }
+  if (warning.action.type === "mass") {
     await removeMassAssignment.mutate({ id: warning.action.id });
   }
 };
-
-const editWarning = (warning: WarningItem) => {
-  if (!warning.action?.id || !data.value) return;
-  if (warning.action.type === "fixed") {
-    const fixed = data.value.fixedPeriods.find(
-      (item) => item._id === warning.action?.id,
-    );
-    if (fixed) startEditFixed(fixed);
-  }
-  if (warning.action.type === "mass") {
-    const mass = data.value.massAssignments.find(
-      (item) => item._id === warning.action?.id,
-    );
-    if (mass) startEditMass(mass);
-  }
-};
-
-const hasActionableWarnings = computed(() =>
-  timetable.value.warnings.some((warning) => warning.action?.id),
-);
-
-const canAddClassSubject = computed(
-  () =>
-    newClassSubjectClassIds.value.length > 0 &&
-    Boolean(newClassSubjectSubjectId.value),
-);
-const canAddFixed = computed(
-  () => Boolean(newFixedClassId.value) && Boolean(newFixedSubjectId.value),
-);
-const canAddMass = computed(
-  () => Boolean(newMassSubjectId.value) && newMassClassIds.value.length > 0,
-);
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#FFF4EE] relative overflow-hidden">
-    <div
-      class="absolute inset-0 pointer-events-none opacity-30"
-      style="
-        background-image: radial-gradient(#e6b8a2 1px, transparent 1px);
-        background-size: 20px 20px;
-      "
-    ></div>
-
-    <header class="relative z-10 px-6 py-5 border-b border-[#f0cdbb]">
-      <div class="max-w-6xl mx-auto flex items-center justify-between">
-        <h1 class="text-2xl font-semibold text-[#5a2d1a]">
-          KALS Timetable generator
-        </h1>
-        <span class="text-sm text-[#8a4b32]">Live • Dynamic</span>
+  <div class="min-h-screen bg-[#fff4ee] text-[#5a2d1a]">
+    <header class="border-b border-[#f0cdbb] bg-[#fff0e7]">
+      <div class="mx-auto max-w-7xl px-6 py-6">
+        <p class="text-sm uppercase tracking-[0.22em] text-[#a26045]">Planner-first</p>
+        <h1 class="mt-1 text-3xl font-semibold">KALS Timetable Generator</h1>
+        <p class="mt-2 max-w-3xl text-[#8a4b32]">
+          This layout is optimized for your actual flow: organize subjects and teacher coverage,
+          lock non-essential subjects first, then allocate essential subjects by grade.
+        </p>
       </div>
     </header>
 
-    <main class="relative z-10 max-w-6xl mx-auto px-6 py-10 space-y-10">
-      <section>
-        <h2 class="text-3xl font-bold text-[#5a2d1a]">
-          Build your timetable generator
-        </h2>
-        <p class="text-[#8a4b32] mt-1">
-          Create classes, teachers, subjects, and constraints. The timetable is
-          generated with teacher conflict prevention and repeat minimization.
-        </p>
-      </section>
-
-      <section class="grid lg:grid-cols-2 gap-6">
-        <div
-          class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4"
-        >
-          <h3 class="text-xl font-semibold text-[#5a2d1a]">Classes</h3>
-          <div class="flex gap-3">
-            <input
-              v-model="newClassName"
-              placeholder="Add class (e.g., 1A)"
-              class="flex-1 rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] placeholder-[#b07a63] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
-            />
-            <button
-              @click="addClass"
-              class="px-5 rounded-xl bg-[#d17c5a] text-white font-medium hover:bg-[#b96547] transition"
-            >
-              Add
-            </button>
-          </div>
-          <ul class="space-y-2 text-[#5a2d1a]">
-            <li
-              v-for="klass in data?.classes"
-              :key="klass._id"
-              class="flex items-center justify-between bg-[#FFF4EE] rounded-xl px-4 py-2 border border-[#f0cdbb]"
-            >
-              <span>{{ klass.name }}</span>
-              <button
-                @click="removeClass.mutate({ id: klass._id })"
-                class="text-[#b96547] hover:text-[#8a4b32] text-sm"
-              >
-                Delete
-              </button>
-            </li>
-          </ul>
+    <main class="mx-auto max-w-7xl space-y-8 px-6 py-8">
+      <section class="grid gap-4 md:grid-cols-4">
+        <div class="rounded-2xl border border-[#f0cdbb] bg-[#ffe7dc] p-4">
+          <p class="text-sm text-[#8a4b32]">Classes</p>
+          <p class="mt-1 text-2xl font-semibold">{{ data?.classes.length ?? 0 }}</p>
         </div>
-
-        <div
-          class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4"
-        >
-          <h3 class="text-xl font-semibold text-[#5a2d1a]">Teachers</h3>
-          <div class="flex gap-3">
-            <input
-              v-model="newTeacherName"
-              placeholder="Add teacher"
-              class="flex-1 rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] placeholder-[#b07a63] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
-            />
-            <button
-              @click="addTeacher"
-              class="px-5 rounded-xl bg-[#d17c5a] text-white font-medium hover:bg-[#b96547] transition"
-            >
-              Add
-            </button>
-          </div>
-          <ul class="space-y-2 text-[#5a2d1a]">
-            <li
-              v-for="teacher in data?.teachers"
-              :key="teacher._id"
-              class="flex items-center justify-between bg-[#FFF4EE] rounded-xl px-4 py-2 border border-[#f0cdbb]"
-            >
-              <span>{{ teacher.name }}</span>
-              <button
-                @click="removeTeacher.mutate({ id: teacher._id })"
-                class="text-[#b96547] hover:text-[#8a4b32] text-sm"
-              >
-                Delete
-              </button>
-            </li>
-          </ul>
+        <div class="rounded-2xl border border-[#f0cdbb] bg-[#ffe7dc] p-4">
+          <p class="text-sm text-[#8a4b32]">Teachers</p>
+          <p class="mt-1 text-2xl font-semibold">{{ data?.teachers.length ?? 0 }}</p>
+        </div>
+        <div class="rounded-2xl border border-[#f0cdbb] bg-[#ffe7dc] p-4">
+          <p class="text-sm text-[#8a4b32]">Subjects</p>
+          <p class="mt-1 text-2xl font-semibold">{{ data?.subjects.length ?? 0 }}</p>
+        </div>
+        <div class="rounded-2xl border border-[#f0cdbb] bg-[#ffe7dc] p-4">
+          <p class="text-sm text-[#8a4b32]">Warnings</p>
+          <p class="mt-1 text-2xl font-semibold">{{ timetable.warnings.length }}</p>
         </div>
       </section>
 
-      <section class="grid lg:grid-cols-2 gap-6">
-        <div
-          class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4"
-        >
-          <h3 class="text-xl font-semibold text-[#5a2d1a]">Subjects</h3>
-          <div class="grid gap-3">
-            <input
-              v-model="newSubjectName"
-              placeholder="Subject name"
-              class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] placeholder-[#b07a63] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
-            />
-            <select
-              v-model="newSubjectTeacherId"
-              class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
-            >
-              <option value="">Select teacher</option>
-              <option
-                v-for="teacher in data?.teachers"
-                :key="teacher._id"
-                :value="teacher._id"
-              >
-                {{ teacher.name }}
-              </option>
-            </select>
-            <button
-              @click="addSubject"
-              class="px-5 py-3 rounded-xl bg-[#d17c5a] text-white font-medium hover:bg-[#b96547] transition"
-            >
-              Add subject
-            </button>
-          </div>
-          <ul class="space-y-2 text-[#5a2d1a]">
-            <li
-              v-for="subject in data?.subjects"
-              :key="subject._id"
-              class="flex items-center justify-between bg-[#FFF4EE] rounded-xl px-4 py-2 border border-[#f0cdbb]"
-            >
-              <span>
-                {{ subject.name }} ·
-                {{
-                  data?.teachers.find(
-                    (teacher) => teacher._id === subject.teacherId,
-                  )?.name
-                }}
-              </span>
-              <button
-                @click="removeSubject.mutate({ id: subject._id })"
-                class="text-[#b96547] hover:text-[#8a4b32] text-sm"
-              >
-                Delete
-              </button>
-            </li>
-          </ul>
-        </div>
-
-        <div
-          class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4"
-        >
-          <h3 class="text-xl font-semibold text-[#5a2d1a]">
-            Class subject scope
-          </h3>
-          <div class="grid gap-3">
-            <div
-              class="bg-[#FFF4EE] border border-[#f0cdbb] rounded-xl p-3 space-y-2"
-            >
-              <div class="flex items-center justify-between">
-                <p class="text-sm text-[#8a4b32]">Select classes</p>
-                <div class="flex gap-2 text-xs">
-                  <button
-                    type="button"
-                    @click="selectAllClassSubjects"
-                    class="text-[#b96547] hover:text-[#8a4b32]"
-                  >
-                    Select all
-                  </button>
-                  <button
-                    type="button"
-                    @click="clearClassSubjects"
-                    class="text-[#b96547] hover:text-[#8a4b32]"
-                  >
-                    Clear
-                  </button>
+      <section class="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+        <div class="space-y-6">
+          <div class="rounded-3xl border border-[#f0cdbb] bg-[#ffe7dc] p-5">
+            <h2 class="text-xl font-semibold">Classes and teachers</h2>
+            <div class="mt-4 grid gap-5 lg:grid-cols-2">
+              <div>
+                <div class="flex gap-2">
+                  <input v-model="newClassName" placeholder="Add class" class="flex-1 rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+                  <button @click="addClass" class="rounded-xl bg-[#d17c5a] px-4 text-white">Add</button>
                 </div>
+                <input v-model="classSearch" placeholder="Filter classes" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+                <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto">
+                  <li v-for="klass in classList" :key="klass._id" class="flex items-center justify-between rounded-xl border border-[#f0cdbb] bg-white px-4 py-3">
+                    <span>{{ klass.name }}</span>
+                    <button @click="removeClass.mutate({ id: klass._id })" class="text-sm text-[#b96547]">Delete</button>
+                  </li>
+                </ul>
               </div>
-              <div class="flex flex-wrap gap-3">
-                <button
-                  v-for="klass in data?.classes"
-                  :key="klass._id"
-                  type="button"
-                  @click="toggleClassSubjectClass(klass._id)"
-                  class="px-3 py-1 rounded-full border text-sm"
-                  :class="
-                    newClassSubjectClassIds.includes(klass._id)
-                      ? 'bg-[#d17c5a] text-white border-[#d17c5a]'
-                      : 'bg-[#FFF4EE] text-[#5a2d1a] border-[#f0cdbb]'
-                  "
-                >
-                  {{ klass.name }}
-                </button>
+              <div>
+                <div class="flex gap-2">
+                  <input v-model="newTeacherName" placeholder="Add teacher" class="flex-1 rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+                  <button @click="addTeacher" class="rounded-xl bg-[#d17c5a] px-4 text-white">Add</button>
+                </div>
+                <input v-model="teacherSearch" placeholder="Filter teachers" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+                <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto">
+                  <li v-for="teacher in teacherList" :key="teacher._id" class="flex items-center justify-between rounded-xl border border-[#f0cdbb] bg-white px-4 py-3">
+                    <span>{{ teacher.name }}</span>
+                    <button @click="removeTeacher.mutate({ id: teacher._id })" class="text-sm text-[#b96547]">Delete</button>
+                  </li>
+                </ul>
               </div>
-              <p class="text-xs text-[#b07a63]">
-                {{ newClassSubjectClassIds.length }} classes selected
-              </p>
             </div>
-            <select
-              v-model="newClassSubjectSubjectId"
-              class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
-            >
-              <option value="">Select subject</option>
-              <option
-                v-for="subject in data?.subjects"
-                :key="subject._id"
-                :value="subject._id"
-              >
-                {{ subject.name }}
-              </option>
-            </select>
-            <input
-              v-model="newClassSubjectWeeklyPeriods"
-              type="number"
-              min="1"
-              class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
-              placeholder="Weekly periods"
-            />
-            <button
-              @click="addClassSubject"
-              :disabled="!canAddClassSubject"
-              class="px-5 py-3 rounded-xl bg-[#d17c5a] text-white font-medium hover:bg-[#b96547] transition"
-              :class="
-                !canAddClassSubject ? 'opacity-60 cursor-not-allowed' : ''
-              "
-            >
-              Add allocations
-            </button>
           </div>
-          <ul class="space-y-2 text-[#5a2d1a]">
-            <li
-              v-for="allocation in data?.classSubjects"
-              :key="allocation._id"
-              class="flex items-center justify-between bg-[#FFF4EE] rounded-xl px-4 py-2 border border-[#f0cdbb]"
-            >
-              <div
-                v-if="editingClassSubjectId === allocation._id"
-                class="w-full space-y-2"
-              >
-                <div class="grid gap-2 md:grid-cols-3">
-                  <select
-                    v-model="editClassSubjectClassId"
-                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
-                  >
-                    <option
-                      v-for="klass in data?.classes"
-                      :key="klass._id"
-                      :value="klass._id"
-                    >
-                      {{ klass.name }}
-                    </option>
-                  </select>
-                  <select
-                    v-model="editClassSubjectSubjectId"
-                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
-                  >
-                    <option
-                      v-for="subject in data?.subjects"
-                      :key="subject._id"
-                      :value="subject._id"
-                    >
-                      {{ subject.name }}
-                    </option>
-                  </select>
-                  <input
-                    v-model="editClassSubjectWeeklyPeriods"
-                    type="number"
-                    min="1"
-                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
-                  />
-                </div>
-                <div class="flex gap-2 text-sm">
-                  <button
-                    type="button"
-                    @click="saveClassSubjectEdit"
-                    class="text-white bg-[#d17c5a] px-3 py-1 rounded-lg"
-                  >
-                    Save
-                  </button>
-                  <button
-                    type="button"
-                    @click="cancelEditClassSubject"
-                    class="text-[#b96547]"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-              <template v-else>
-                <span>
-                  {{
-                    data?.classes.find(
-                      (klass) => klass._id === allocation.classId,
-                    )?.name
-                  }}
-                  ·
-                  {{
-                    data?.subjects.find(
-                      (subject) => subject._id === allocation.subjectId,
-                    )?.name
-                  }}
-                  · {{ allocation.weeklyPeriods }} / week
-                </span>
-                <div class="flex gap-3 text-sm">
-                  <button
-                    type="button"
-                    @click="startEditClassSubject(allocation)"
-                    class="text-[#b96547] hover:text-[#8a4b32]"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    @click="removeClassSubject.mutate({ id: allocation._id })"
-                    class="text-[#b96547] hover:text-[#8a4b32]"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </template>
-            </li>
-          </ul>
-        </div>
-      </section>
 
-      <section class="grid lg:grid-cols-2 gap-6">
-        <div
-          class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4"
-        >
-          <h3 class="text-xl font-semibold text-[#5a2d1a]">Fixed periods</h3>
-          <div class="grid gap-3">
-            <select
-              v-model="newFixedClassId"
-              class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
-            >
-              <option value="">Select class</option>
-              <option
-                v-for="klass in data?.classes"
-                :key="klass._id"
-                :value="klass._id"
-              >
-                {{ klass.name }}
-              </option>
-            </select>
-            <select
-              v-model="newFixedSubjectId"
-              class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
-            >
-              <option value="">Select subject</option>
-              <option
-                v-for="subject in data?.subjects"
-                :key="subject._id"
-                :value="subject._id"
-              >
-                {{ subject.name }}
-              </option>
-            </select>
-            <div class="grid grid-cols-2 gap-3">
-              <select
-                v-model="newFixedDay"
-                class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
-              >
-                <option
-                  v-for="day in dayOptions"
-                  :key="day.index"
-                  :value="day.index"
-                >
-                  {{ day.label }}
-                </option>
+          <div class="rounded-3xl border border-[#f0cdbb] bg-[#ffe7dc] p-5">
+            <h2 class="text-xl font-semibold">Subject catalogue</h2>
+            <p class="mt-1 text-sm text-[#8a4b32]">
+              Subjects are created once. Teacher coverage is assigned separately per class group so one subject can have many teachers.
+            </p>
+            <div class="mt-4 grid gap-3">
+              <input v-model="newSubjectName" placeholder="Subject name" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+              <input v-model="teacherPickerSearch" placeholder="Optional fallback teacher search" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+              <select v-model="newSubjectTeacherId" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3">
+                <option value="">Optional fallback teacher</option>
+                <option v-for="teacher in teacherOptions" :key="teacher._id" :value="teacher._id">{{ teacher.name }}</option>
               </select>
-              <input
-                v-model="newFixedPeriod"
-                type="number"
-                min="1"
-                class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
-                placeholder="Period #"
-              />
+              <button @click="addSubject" class="rounded-xl bg-[#d17c5a] px-4 py-3 text-white">Add subject</button>
             </div>
-            <button
-              @click="addFixedPeriod"
-              :disabled="!canAddFixed"
-              class="px-5 py-3 rounded-xl bg-[#d17c5a] text-white font-medium hover:bg-[#b96547] transition"
-              :class="!canAddFixed ? 'opacity-60 cursor-not-allowed' : ''"
-            >
-              Lock period
-            </button>
-          </div>
-          <ul class="space-y-2 text-[#5a2d1a]">
-            <li
-              v-for="fixed in data?.fixedPeriods"
-              :key="fixed._id"
-              class="flex items-center justify-between bg-[#FFF4EE] rounded-xl px-4 py-2 border border-[#f0cdbb]"
-            >
-              <div v-if="editingFixedId === fixed._id" class="w-full space-y-2">
-                <div class="grid gap-2 md:grid-cols-4">
-                  <select
-                    v-model="editFixedClassId"
-                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
-                  >
-                    <option
-                      v-for="klass in data?.classes"
-                      :key="klass._id"
-                      :value="klass._id"
-                    >
-                      {{ klass.name }}
-                    </option>
-                  </select>
-                  <select
-                    v-model="editFixedSubjectId"
-                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
-                  >
-                    <option
-                      v-for="subject in data?.subjects"
-                      :key="subject._id"
-                      :value="subject._id"
-                    >
-                      {{ subject.name }}
-                    </option>
-                  </select>
-                  <select
-                    v-model="editFixedDay"
-                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
-                  >
-                    <option
-                      v-for="day in dayOptions"
-                      :key="day.index"
-                      :value="day.index"
-                    >
-                      {{ day.label }}
-                    </option>
-                  </select>
-                  <input
-                    v-model="editFixedPeriod"
-                    type="number"
-                    min="1"
-                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
-                  />
-                </div>
-                <div class="flex gap-2 text-sm">
-                  <button
-                    type="button"
-                    @click="saveFixedEdit"
-                    class="text-white bg-[#d17c5a] px-3 py-1 rounded-lg"
-                  >
-                    Save
-                  </button>
-                  <button
-                    type="button"
-                    @click="cancelEditFixed"
-                    class="text-[#b96547]"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-              <template v-else>
-                <span>
-                  {{
-                    data?.classes.find((klass) => klass._id === fixed.classId)
-                      ?.name
-                  }}
-                  ·
-                  {{
-                    data?.subjects.find(
-                      (subject) => subject._id === fixed.subjectId,
-                    )?.name
-                  }}
-                  · {{ dayOptions[fixed.day]?.short }} · Period
-                  {{ fixed.period }}
-                </span>
-                <div class="flex gap-3 text-sm">
-                  <button
-                    type="button"
-                    @click="startEditFixed(fixed)"
-                    class="text-[#b96547] hover:text-[#8a4b32]"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    @click="removeFixedPeriod.mutate({ id: fixed._id })"
-                    class="text-[#b96547] hover:text-[#8a4b32]"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </template>
-            </li>
-          </ul>
-        </div>
 
-        <div
-          class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4"
-        >
-          <h3 class="text-xl font-semibold text-[#5a2d1a]">Mass subjects</h3>
-          <div class="grid gap-3">
-            <select
-              v-model="newMassSubjectId"
-              class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
-            >
-              <option value="">Select subject</option>
-              <option
-                v-for="subject in data?.subjects"
-                :key="subject._id"
-                :value="subject._id"
-              >
-                {{ subject.name }}
-              </option>
-            </select>
-            <div class="grid grid-cols-2 gap-3">
-              <select
-                v-model="newMassDay"
-                class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
-              >
-                <option
-                  v-for="day in dayOptions"
-                  :key="day.index"
-                  :value="day.index"
-                >
-                  {{ day.label }}
-                </option>
-              </select>
-              <input
-                v-model="newMassPeriod"
-                type="number"
-                min="1"
-                class="rounded-xl border border-[#f0cdbb] px-4 py-3 bg-[#FFF4EE] text-[#5a2d1a] focus:outline-none focus:ring-2 focus:ring-[#d17c5a]"
-                placeholder="Period #"
-              />
-            </div>
-            <div
-              class="bg-[#FFF4EE] border border-[#f0cdbb] rounded-xl p-3 space-y-2"
-            >
-              <div class="flex items-center justify-between">
-                <p class="text-sm text-[#8a4b32]">Select classes</p>
-                <div class="flex gap-2 text-xs">
-                  <button
-                    type="button"
-                    @click="selectAllMassClasses"
-                    class="text-[#b96547] hover:text-[#8a4b32]"
-                  >
-                    Select all
-                  </button>
-                  <button
-                    type="button"
-                    @click="clearMassClasses"
-                    class="text-[#b96547] hover:text-[#8a4b32]"
-                  >
-                    Clear
-                  </button>
+            <div class="mt-4 rounded-2xl border border-[#f0cdbb] bg-white p-4">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <h3 class="font-semibold">Teacher coverage for a subject</h3>
+                  <p class="mt-1 text-xs text-[#8a4b32]">
+                    Quick flow: 1. Pick subject 2. Pick teacher 3. Pick classes 4. Save coverage.
+                  </p>
+                </div>
+                <div class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-3 py-2 text-xs text-[#8a4b32]">
+                  {{ newSubjectTeacherClassIds.length }} classes selected
                 </div>
               </div>
-              <div class="flex flex-wrap gap-3">
-                <button
-                  v-for="klass in data?.classes"
-                  :key="klass._id"
-                  @click="toggleMassClass(klass._id)"
-                  class="px-3 py-1 rounded-full border text-sm"
-                  :class="
-                    newMassClassIds.includes(klass._id)
-                      ? 'bg-[#d17c5a] text-white border-[#d17c5a]'
-                      : 'bg-[#FFF4EE] text-[#5a2d1a] border-[#f0cdbb]'
-                  "
-                >
-                  {{ klass.name }}
-                </button>
-              </div>
-              <p class="text-xs text-[#b07a63]">
-                {{ newMassClassIds.length }} classes selected
+              <p class="mt-3 text-xs text-[#8a4b32]">
+                Example: ENG I -> BMK for Grades 2-3, KAA for Grade 4, CNM for Grades 9-12.
               </p>
-            </div>
-            <button
-              @click="addMassAssignment"
-              :disabled="!canAddMass"
-              class="px-5 py-3 rounded-xl bg-[#d17c5a] text-white font-medium hover:bg-[#b96547] transition"
-              :class="!canAddMass ? 'opacity-60 cursor-not-allowed' : ''"
-            >
-              Add mass subject
-            </button>
-          </div>
-          <ul class="space-y-2 text-[#5a2d1a]">
-            <li
-              v-for="mass in data?.massAssignments"
-              :key="mass._id"
-              class="flex items-center justify-between bg-[#FFF4EE] rounded-xl px-4 py-2 border border-[#f0cdbb]"
-            >
-              <div v-if="editingMassId === mass._id" class="w-full space-y-2">
-                <div class="grid gap-2 md:grid-cols-4">
-                  <select
-                    v-model="editMassSubjectId"
-                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
-                  >
-                    <option
-                      v-for="subject in data?.subjects"
-                      :key="subject._id"
-                      :value="subject._id"
-                    >
-                      {{ subject.name }}
-                    </option>
-                  </select>
-                  <select
-                    v-model="editMassDay"
-                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
-                  >
-                    <option
-                      v-for="day in dayOptions"
-                      :key="day.index"
-                      :value="day.index"
-                    >
-                      {{ day.label }}
-                    </option>
-                  </select>
-                  <input
-                    v-model="editMassPeriod"
-                    type="number"
-                    min="1"
-                    class="rounded-xl border border-[#f0cdbb] px-3 py-2 bg-white text-[#5a2d1a]"
-                  />
-                  <div class="flex items-center text-xs text-[#8a4b32]">
-                    {{ editMassClassIds.length }} classes
+              <input v-model="teacherCoverageSubjectSearch" placeholder="Filter subjects" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
+              <select v-model="newSubjectTeacherSubjectId" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
+                <option value="">Select subject</option>
+                <option v-for="subject in filterSubjects(teacherCoverageSubjectSearch)" :key="subject._id" :value="subject._id">{{ subjectTitle(subject._id) }}</option>
+              </select>
+              <p class="text-xs text-[#8a4b32]">Pick the base subject once. You do not need to create the subject again for each teacher.</p>
+              <input v-model="teacherCoverageTeacherSearch" placeholder="Filter teachers" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
+              <select v-model="newSubjectTeacherTeacherId" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
+                <option value="">Select teacher</option>
+                <option v-for="teacher in teacherCoverageOptions" :key="teacher._id" :value="teacher._id">{{ teacher.name }}</option>
+              </select>
+              <p class="text-xs text-[#8a4b32]">Then choose the teacher who handles that subject for the classes below.</p>
+              <input v-model="teacherCoverageClassSearch" placeholder="Filter classes or grade" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
+              <div class="mt-3 max-h-56 space-y-3 overflow-y-auto">
+                <div v-for="group in filterClassGroups(teacherCoverageClassSearch)" :key="`coverage-${group.label}`" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] p-3">
+                  <div class="flex items-center justify-between">
+                    <p class="text-sm font-medium">{{ group.label }}</p>
+                    <button @click="toggleCoverageGrade(group.classes.map((klass) => klass._id))" class="text-xs text-[#b96547]">Toggle grade</button>
                   </div>
-                </div>
-                <div class="bg-white border border-[#f0cdbb] rounded-xl p-2">
-                  <div class="flex flex-wrap gap-2">
-                    <button
-                      v-for="klass in data?.classes"
-                      :key="klass._id"
-                      type="button"
-                      @click="toggleEditMassClass(klass._id)"
-                      class="px-2 py-1 rounded-full border text-xs"
-                      :class="
-                        editMassClassIds.includes(klass._id)
-                          ? 'bg-[#d17c5a] text-white border-[#d17c5a]'
-                          : 'bg-[#FFF4EE] text-[#5a2d1a] border-[#f0cdbb]'
-                      "
-                    >
+                  <div class="mt-2 flex flex-wrap gap-2">
+                    <button v-for="klass in group.classes" :key="klass._id" @click="toggleCoverageClass(klass._id)" class="rounded-full border px-3 py-1 text-sm" :class="newSubjectTeacherClassIds.includes(klass._id) ? 'border-[#d17c5a] bg-[#d17c5a] text-white' : 'border-[#f0cdbb] bg-white'">
                       {{ klass.name }}
                     </button>
                   </div>
                 </div>
-                <div class="flex gap-2 text-sm">
-                  <button
-                    type="button"
-                    @click="saveMassEdit"
-                    class="text-white bg-[#d17c5a] px-3 py-1 rounded-lg"
-                  >
-                    Save
-                  </button>
-                  <button
-                    type="button"
-                    @click="cancelEditMass"
-                    class="text-[#b96547]"
-                  >
-                    Cancel
+              </div>
+              <div class="rounded-xl border border-dashed border-[#e5b6a1] bg-[#fff8f3] px-3 py-3 text-xs text-[#8a4b32]">
+                Result:
+                {{
+                  newSubjectTeacherSubjectId && newSubjectTeacherTeacherId
+                    ? `${subjectTitle(newSubjectTeacherSubjectId)} -> ${
+                        teacherById.get(newSubjectTeacherTeacherId)?.name ?? "Teacher"
+                      } for ${newSubjectTeacherClassIds.length} class${
+                        newSubjectTeacherClassIds.length === 1 ? "" : "es"
+                      }`
+                    : "Choose a subject, a teacher, and one or more classes."
+                }}
+              </div>
+              <button @click="addSubjectTeacherCoverage" class="mt-3 w-full rounded-xl bg-[#d17c5a] px-4 py-3 text-white">Save teacher coverage</button>
+            </div>
+
+            <input v-model="subjectSearch" placeholder="Filter subject catalogue" class="mt-4 w-full rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+            <div class="mt-4 max-h-[32rem] space-y-3 overflow-y-auto">
+              <div v-for="group in groupedSubjects" :key="group.name" class="rounded-2xl border border-[#f0cdbb] bg-white px-4 py-4">
+                <div class="flex items-center justify-between">
+                  <h3 class="font-semibold">{{ group.name }}</h3>
+                  <span class="text-xs text-[#8a4b32]">{{ group.items.length }} subject{{ group.items.length === 1 ? '' : 's' }}</span>
+                </div>
+                <ul class="mt-3 space-y-2">
+                  <li v-for="subject in group.items" :key="subject._id" class="flex items-center justify-between rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-3 py-3">
+                    <div class="w-full">
+                      <div class="flex items-start justify-between gap-3">
+                        <div>
+                          <p class="font-medium">{{ subjectTitle(subject._id) }}</p>
+                          <p class="text-xs text-[#8a4b32]">{{ teacherAssignmentsForSubject(subject._id).length }} teacher groups · {{ subjectMeta.get(subject._id)?.classCount }} classes · {{ subjectMeta.get(subject._id)?.weeklyPeriods }} weekly periods</p>
+                        </div>
+                        <button @click="toggleCoverageCollapse(subject._id)" class="rounded-lg border border-[#f0cdbb] bg-white px-3 py-1 text-xs text-[#8a4b32]">
+                          {{ coverageCollapsed(subject._id) ? "Expand" : "Collapse" }}
+                        </button>
+                      </div>
+                      <div v-if="!coverageCollapsed(subject._id)" class="mt-2 space-y-1">
+                        <p v-if="teacherAssignmentsForSubject(subject._id).length === 0" class="text-xs text-[#b07a63]">
+                          No teacher coverage added yet
+                        </p>
+                        <div v-for="assignment in teacherAssignmentsForSubject(subject._id)" :key="assignment._id" class="flex items-center justify-between gap-3 rounded-lg border border-[#f0cdbb] bg-white px-3 py-2 text-xs">
+                          <span>
+                            {{ teacherById.get(assignment.teacherId)?.name ?? "Unknown" }} ->
+                            {{ assignment.classIds.map((id) => className(id)).join(", ") }}
+                          </span>
+                          <button @click="removeSubjectTeacherAssignment.mutate({ id: assignment._id })" class="text-[#b96547]">Delete</button>
+                        </div>
+                      </div>
+                      <p v-else class="mt-2 text-xs text-[#8a4b32]">
+                        {{ teacherAssignmentsForSubject(subject._id).length }} teacher groups hidden
+                      </p>
+                    </div>
+                    <button @click="removeSubject.mutate({ id: subject._id })" class="text-sm text-[#b96547]">Delete</button>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="space-y-6">
+          <div class="rounded-3xl border border-[#f0cdbb] bg-[#ffe7dc] p-5">
+            <h2 class="text-xl font-semibold">Step 1: Lock non-essential subjects</h2>
+            <p class="mt-1 text-sm text-[#8a4b32]">Use mass locks for school-wide periods and fixed locks for one class at one slot.</p>
+            <div class="mt-5 grid gap-5 xl:grid-cols-2">
+              <div class="rounded-2xl border border-[#f0cdbb] bg-white p-4">
+                <h3 class="font-semibold">Mass lock</h3>
+                <p class="mt-1 text-xs text-[#8a4b32]">Use this for assemblies, games, labs, swimming, or any subject that must happen at the same time across many classes.</p>
+                <input v-model="massSubjectSearch" placeholder="Filter subjects" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
+                <select v-model="newMassSubjectId" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
+                  <option value="">Select subject</option>
+                  <option v-for="subject in filterSubjects(massSubjectSearch)" :key="subject._id" :value="subject._id">{{ subjectLabel(subject._id) }}</option>
+                </select>
+                <div class="mt-3 grid grid-cols-2 gap-3">
+                  <select v-model="newMassDay" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
+                    <option v-for="day in dayOptions" :key="day.index" :value="day.index">{{ day.label }}</option>
+                  </select>
+                  <input v-model="newMassPeriod" type="number" min="1" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
+                </div>
+                <input v-model="massClassSearch" placeholder="Filter classes or grade" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
+                <div class="mt-3 max-h-56 space-y-3 overflow-y-auto">
+                  <div v-for="group in filterClassGroups(massClassSearch)" :key="group.label" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] p-3">
+                    <div class="flex items-center justify-between">
+                      <p class="text-sm font-medium">{{ group.label }}</p>
+                      <button @click="toggleMassGrade(group.classes.map((klass) => klass._id))" class="text-xs text-[#b96547]">Toggle grade</button>
+                    </div>
+                    <div class="mt-2 flex flex-wrap gap-2">
+                      <button v-for="klass in group.classes" :key="klass._id" @click="toggleMassClass(klass._id)" class="rounded-full border px-3 py-1 text-sm" :class="newMassClassIds.includes(klass._id) ? 'border-[#d17c5a] bg-[#d17c5a] text-white' : 'border-[#f0cdbb] bg-white'">
+                        {{ klass.name }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <p class="mt-3 text-xs text-[#8a4b32]">{{ newMassClassIds.length }} classes selected for this lock.</p>
+                <button @click="addMass" :disabled="isAddingMass" class="mt-3 w-full rounded-xl bg-[#d17c5a] px-4 py-3 text-white disabled:cursor-not-allowed disabled:opacity-70">
+                  {{ isAddingMass ? "Adding mass lock..." : "Add mass lock" }}
+                </button>
+              </div>
+
+              <div class="rounded-2xl border border-[#f0cdbb] bg-white p-4">
+                <h3 class="font-semibold">Fixed lock</h3>
+                <input v-model="fixedClassSearch" placeholder="Filter classes" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
+                <select v-model="newFixedClassId" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
+                  <option value="">Select class</option>
+                  <option v-for="klass in filterClassGroups(fixedClassSearch).flatMap((group) => group.classes)" :key="klass._id" :value="klass._id">{{ klass.name }}</option>
+                </select>
+                <input v-model="fixedSubjectSearch" placeholder="Filter subjects" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
+                <select v-model="newFixedSubjectId" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
+                  <option value="">Select subject</option>
+                  <option v-for="subject in filterSubjects(fixedSubjectSearch)" :key="subject._id" :value="subject._id">{{ subjectLabel(subject._id) }}</option>
+                </select>
+                <div class="mt-3 grid grid-cols-2 gap-3">
+                  <select v-model="newFixedDay" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
+                    <option v-for="day in dayOptions" :key="day.index" :value="day.index">{{ day.label }}</option>
+                  </select>
+                  <input v-model="newFixedPeriod" type="number" min="1" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
+                </div>
+                <button @click="addFixed" :disabled="isAddingFixed" class="mt-3 w-full rounded-xl bg-[#d17c5a] px-4 py-3 text-white disabled:cursor-not-allowed disabled:opacity-70">
+                  {{ isAddingFixed ? "Adding fixed lock..." : "Add fixed lock" }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-3xl border border-[#f0cdbb] bg-[#ffe7dc] p-5">
+            <h2 class="text-xl font-semibold">Step 2: Essential subject allocation</h2>
+            <p class="mt-1 text-sm text-[#8a4b32]">Pick the subject, set weekly periods, then choose the classes. Teacher is resolved automatically from the teacher coverage you saved above.</p>
+            <input v-model="essentialSubjectSearch" placeholder="Filter essential subjects" class="mt-4 w-full rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+            <select v-model="newClassSubjectSubjectId" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-white px-4 py-3">
+              <option value="">Select subject</option>
+              <option v-for="subject in filterSubjects(essentialSubjectSearch)" :key="subject._id" :value="subject._id">{{ subjectLabel(subject._id) }}</option>
+            </select>
+            <input v-model="newClassSubjectWeeklyPeriods" type="number" min="1" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+            <input v-model="classGroupSearch" placeholder="Filter classes or grade" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+            <div class="mt-3 max-h-72 space-y-3 overflow-y-auto">
+              <div v-for="group in filterClassGroups(classGroupSearch)" :key="group.label" class="rounded-xl border border-[#f0cdbb] bg-white p-3">
+                <div class="flex items-center justify-between">
+                  <p class="font-medium">{{ group.label }}</p>
+                  <button @click="toggleEssentialGrade(group.classes.map((klass) => klass._id))" class="text-xs text-[#b96547]">Toggle grade</button>
+                </div>
+                <div class="mt-2 flex flex-wrap gap-2">
+                  <button v-for="klass in group.classes" :key="klass._id" @click="toggleEssentialClass(klass._id)" class="rounded-full border px-3 py-1 text-sm" :class="newClassSubjectClassIds.includes(klass._id) ? 'border-[#d17c5a] bg-[#d17c5a] text-white' : 'border-[#f0cdbb] bg-[#fff8f3]'">
+                    {{ klass.name }}
                   </button>
                 </div>
               </div>
-              <template v-else>
-                <span>
-                  {{
-                    data?.subjects.find(
-                      (subject) => subject._id === mass.subjectId,
-                    )?.name
-                  }}
-                  · {{ dayOptions[mass.day]?.short }} · Period
-                  {{ mass.period }} ·
-                  {{
-                    mass.classIds
-                      .map(
-                        (id) =>
-                          data?.classes.find((klass) => klass._id === id)?.name,
-                      )
-                      .filter(Boolean)
-                      .join(", ")
-                  }}
-                </span>
-                <div class="flex gap-3 text-sm">
-                  <button
-                    type="button"
-                    @click="startEditMass(mass)"
-                    class="text-[#b96547] hover:text-[#8a4b32]"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    @click="removeMassAssignment.mutate({ id: mass._id })"
-                    class="text-[#b96547] hover:text-[#8a4b32]"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </template>
-            </li>
-          </ul>
+            </div>
+            <div class="mt-3 rounded-xl border border-dashed border-[#e5b6a1] bg-white px-3 py-3 text-xs text-[#8a4b32]">
+              {{ newClassSubjectClassIds.length }} classes selected. Add teacher coverage first if this subject has different teachers for different grades.
+            </div>
+            <button @click="addClassSubject" class="mt-3 w-full rounded-xl bg-[#d17c5a] px-4 py-3 text-white">Add essential allocation</button>
+          </div>
         </div>
       </section>
 
-      <section
-        class="bg-[#FFE7DC] border border-[#f0cdbb] rounded-2xl p-6 space-y-4"
-      >
-        <div class="flex items-center justify-between">
-          <h3 class="text-xl font-semibold text-[#5a2d1a]">
-            Generated timetable
-          </h3>
-          <span class="text-sm text-[#8a4b32]">
-            Updated automatically with each change
-          </span>
-        </div>
-        <div v-if="timetable.warnings.length" class="space-y-3">
-          <div class="flex items-center justify-between">
-            <p class="text-sm font-semibold text-[#8a4b32]">Warnings</p>
-            <span class="text-xs text-[#b07a63]">
-              {{ timetable.warnings.length }} issues detected
-            </span>
+      <section class="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+        <div class="rounded-3xl border border-[#f0cdbb] bg-[#ffe7dc] p-5">
+          <h2 class="text-xl font-semibold">Existing constraints</h2>
+          <div class="mt-4 grid gap-3 md:grid-cols-3">
+            <input v-model="lockGradeFilter" placeholder="Filter by grade" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+            <input v-model="lockSubjectFilter" placeholder="Filter by subject" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+            <select v-model="lockDayFilter" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3">
+              <option value="all">All days</option>
+              <option v-for="day in dayOptions" :key="`lock-filter-${day.index}`" :value="String(day.index)">
+                {{ day.label }}
+              </option>
+            </select>
           </div>
-          <div
-            v-if="hasActionableWarnings"
-            class="text-xs text-[#8a4b32] bg-[#FFF4EE] border border-[#f0cdbb] rounded-xl p-3"
-          >
-            Tip: Use the resolve buttons to remove conflicting fixed/mass
-            entries, or edit them to adjust the day/period.
+          <div class="mt-4 grid gap-5 xl:grid-cols-2">
+            <div>
+              <h3 class="font-medium">Fixed locks</h3>
+              <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto">
+                <li v-for="fixed in filteredFixedLocks" :key="fixed._id" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3">
+                  <p class="font-medium">{{ className(fixed.classId) }}</p>
+                  <p class="text-sm text-[#8a4b32]">{{ subjectTitle(fixed.subjectId) }}</p>
+                  <p class="mt-1 text-xs text-[#8a4b32]">{{ teacherLabelForSubjectClass(fixed.subjectId, fixed.classId) }}</p>
+                  <div class="mt-2 flex items-center justify-between text-xs text-[#8a4b32]">
+                    <span>{{ dayOptions[fixed.day]?.short }} · Period {{ fixed.period }}</span>
+                    <button @click="removeFixedPeriod.mutate({ id: fixed._id })" class="text-[#b96547]">Delete</button>
+                  </div>
+                </li>
+              </ul>
+            </div>
+            <div>
+              <h3 class="font-medium">Mass locks</h3>
+              <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto">
+                <li v-for="mass in filteredMassLocks" :key="mass._id" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3">
+                  <p class="font-medium">{{ subjectTitle(mass.subjectId) }}</p>
+                  <p class="text-sm text-[#8a4b32]">{{ dayOptions[mass.day]?.short }} · Period {{ mass.period }}</p>
+                  <p class="mt-1 text-xs text-[#8a4b32]">{{ teacherLabelForMassAssignment(mass.subjectId, mass.classIds) }}</p>
+                  <p class="mt-1 text-xs text-[#8a4b32]">{{ mass.classIds.map((id) => className(id)).join(', ') }}</p>
+                  <button @click="removeMassAssignment.mutate({ id: mass._id })" class="mt-2 text-xs text-[#b96547]">Delete</button>
+                </li>
+              </ul>
+            </div>
           </div>
-          <ul class="text-sm text-[#8a4b32] space-y-2">
-            <li
-              v-for="warning in timetable.warnings"
-              :key="warning.id"
-              class="flex items-center justify-between gap-3 bg-[#FFF4EE] border border-[#f0cdbb] rounded-xl px-3 py-2"
-            >
-              <span>{{ warning.message }}</span>
-              <div v-if="warning.action?.id" class="flex gap-2 text-xs">
-                <button
-                  type="button"
-                  @click="editWarning(warning)"
-                  class="text-[#b96547] hover:text-[#8a4b32]"
-                >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  @click="resolveWarning(warning)"
-                  class="text-[#b96547] hover:text-[#8a4b32]"
-                >
-                  Resolve
-                </button>
+          <div class="mt-5 flex items-center justify-between gap-3">
+            <div>
+              <h3 class="font-medium">Essential allocations</h3>
+              <p class="mt-1 text-xs text-[#8a4b32]">
+                Filter by grade, class, subject, or teacher, then switch the grouping to inspect the same data faster.
+              </p>
+            </div>
+            <div class="rounded-xl border border-[#f0cdbb] bg-white px-3 py-2 text-xs text-[#8a4b32]">
+              {{ filteredEssentialAllocations.length }} matching allocations
+            </div>
+          </div>
+          <div class="mt-3 grid gap-3 md:grid-cols-2">
+            <input v-model="allocationGradeFilter" placeholder="Filter by grade" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+            <input v-model="allocationClassFilter" placeholder="Filter by class" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+            <input v-model="allocationSubjectFilter" placeholder="Filter by subject" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+            <input v-model="allocationTeacherFilter" placeholder="Filter by teacher" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+          </div>
+          <div class="mt-3 rounded-xl border border-[#f0cdbb] bg-white p-3">
+            <label class="block text-xs text-[#8a4b32]">Group allocations by</label>
+            <select v-model="allocationGroupBy" class="mt-2 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
+              <option value="grade">Grade</option>
+              <option value="class">Class</option>
+              <option value="subject">Subject</option>
+              <option value="teacher">Teacher</option>
+            </select>
+          </div>
+          <div class="mt-3 max-h-80 space-y-3 overflow-y-auto">
+            <div v-for="group in groupedEssentialAllocations" :key="group.label" class="rounded-xl border border-[#f0cdbb] bg-white p-3">
+              <div class="flex items-center justify-between gap-3">
+                <p class="font-medium">{{ group.label }}</p>
+                <span class="text-xs text-[#8a4b32]">{{ group.items.length }} allocation{{ group.items.length === 1 ? "" : "s" }}</span>
               </div>
-            </li>
-          </ul>
+              <ul class="mt-3 space-y-2">
+                <li v-for="allocation in group.items" :key="allocation._id" class="flex items-center justify-between rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
+                  <div>
+                    <p class="font-medium">{{ allocation.className }}</p>
+                    <p class="text-sm text-[#8a4b32]">
+                      {{ allocation.subjectName }} · {{ allocation.teacherName }} ·
+                      {{ allocation.weeklyPeriods }}/week
+                    </p>
+                    <p class="text-xs text-[#8a4b32]">{{ allocation.gradeLabel }}</p>
+                  </div>
+                  <button @click="removeClassSubject.mutate({ id: allocation._id })" class="text-sm text-[#b96547]">Delete</button>
+                </li>
+              </ul>
+            </div>
+            <div v-if="groupedEssentialAllocations.length === 0" class="rounded-xl border border-dashed border-[#d9b3a0] bg-white px-4 py-8 text-center text-sm text-[#8a4b32]">
+              No essential allocations match the current filters.
+            </div>
+          </div>
         </div>
-        <div class="space-y-8">
-          <div
-            v-for="schedule in timetable.classSchedules"
-            :key="schedule.classId"
-            class="bg-[#FFF4EE] border border-[#f0cdbb] rounded-2xl p-5 shadow-sm"
-          >
-            <h4 class="text-lg font-semibold text-[#5a2d1a] mb-4">
-              Class {{ schedule.className }}
-            </h4>
-            <div class="overflow-x-auto">
-              <table class="min-w-full border-collapse text-sm">
-                <thead>
-                  <tr>
-                    <th class="text-left text-[#8a4b32] py-2 px-3">Day</th>
+        <div class="rounded-3xl border border-[#f0cdbb] bg-[#ffe7dc] p-5">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <h2 class="text-xl font-semibold">Generated timetable</h2>
+              <p class="mt-1 text-sm text-[#8a4b32]">Filter to a class when the full-school view becomes noisy.</p>
+            </div>
+            <input v-model="timetableSearch" placeholder="Filter by class" class="w-full max-w-xs rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+          </div>
 
-                    <th
-                      v-for="period in 8"
-                      :key="period"
-                      class="text-left text-[#8a4b32] py-2 px-3"
-                    >
-                      Period {{ period }}
-                    </th>
-                  </tr>
-                </thead>
+          <div v-if="timetable.warnings.length" class="mt-4 rounded-2xl border border-[#f0cdbb] bg-white p-4">
+            <div class="flex items-center justify-between">
+              <h3 class="font-medium">Warnings</h3>
+              <span class="text-xs text-[#8a4b32]">{{ timetable.warnings.length }}</span>
+            </div>
+            <ul class="mt-3 max-h-52 space-y-2 overflow-y-auto text-sm">
+              <li v-for="warning in timetable.warnings" :key="warning.id" class="flex items-center justify-between gap-3 rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-3 py-3">
+                <span>{{ warning.message }}</span>
+                <button v-if="warning.action?.id" @click="resolveWarning(warning)" class="text-xs text-[#b96547]">Resolve</button>
+              </li>
+            </ul>
+          </div>
 
-                <tbody>
-                  <tr
-                    v-for="day in dayOptions"
-                    :key="day.index"
-                    class="border-t border-[#f0cdbb]"
-                  >
-                    <!-- Day name row label -->
-                    <td class="py-3 px-3 text-[#8a4b32] font-medium">
-                      {{ day.short }}
-                    </td>
-
-                    <!-- Period cells -->
-                    <td v-for="period in 8" :key="period" class="py-3 px-3">
-                      <div v-if="period <= day.periods">
-                        <div
-                          v-if="schedule.grid[day.index][period]"
-                          class="rounded-xl px-3 py-2 border text-[#5a2d1a]"
-                          :class="
-                            schedule.grid[day.index][period]?.locked
-                              ? 'bg-[#FFD9C7] border-[#d17c5a]'
-                              : 'bg-white border-[#f0cdbb]'
-                          "
-                        >
-                          <p class="font-semibold">
-                            {{ schedule.grid[day.index][period]?.subjectName }}
-                          </p>
-                          <p class="text-xs text-[#8a4b32]">
-                            {{ schedule.grid[day.index][period]?.teacherName }}
-                            <span
-                              v-if="schedule.grid[day.index][period]?.locked"
-                            >
-                              · Locked
-                            </span>
-                          </p>
-                        </div>
-
-                        <div v-else class="text-[#b07a63] italic">Unfilled</div>
-                      </div>
-
-                      <div v-else class="text-[#d6a08a] italic">—</div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+          <div class="mt-4 space-y-5">
+            <div v-for="schedule in visibleSchedules" :key="schedule.classId" class="rounded-2xl border border-[#f0cdbb] bg-white p-4">
+              <h3 class="font-semibold">Class {{ schedule.className }}</h3>
+              <div class="mt-3 overflow-x-auto">
+                <table class="min-w-full text-sm">
+                  <thead>
+                    <tr class="text-left text-[#8a4b32]">
+                      <th class="px-3 py-2">Day</th>
+                      <th v-for="period in 8" :key="period" class="px-3 py-2">P{{ period }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="day in dayOptions" :key="day.index" class="border-t border-[#f0cdbb]">
+                      <td class="px-3 py-3 font-medium text-[#8a4b32]">{{ day.short }}</td>
+                      <td v-for="period in 8" :key="period" class="px-3 py-3 align-top">
+                        <template v-if="period <= day.periods">
+                          <div v-if="schedule.grid[day.index][period]" class="rounded-xl border px-3 py-2" :class="schedule.grid[day.index][period]?.locked ? 'border-[#d17c5a] bg-[#ffd9c7]' : 'border-[#f0cdbb] bg-[#fff8f3]'">
+                            <p class="font-medium">{{ schedule.grid[day.index][period]?.subjectName }}</p>
+                            <p class="text-xs text-[#8a4b32]">{{ schedule.grid[day.index][period]?.teacherName }}</p>
+                          </div>
+                          <div v-else class="italic text-[#b07a63]">Unfilled</div>
+                        </template>
+                        <div v-else class="italic text-[#d6a08a]">-</div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div v-if="visibleSchedules.length === 0" class="rounded-2xl border border-dashed border-[#d9b3a0] bg-white px-4 py-8 text-center text-[#8a4b32]">
+              No classes match the current filter.
             </div>
           </div>
         </div>
       </section>
     </main>
-
-    <footer class="relative z-10 text-center text-sm text-[#8a4b32] py-6">
-      Built by Mayank Muthanna
-    </footer>
   </div>
 </template>

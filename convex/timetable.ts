@@ -4,11 +4,20 @@ import { v } from "convex/values";
 export const getData = query({
   args: {},
   handler: async (ctx) => {
-    const [classes, teachers, subjects, classSubjects, fixedPeriods, massAssignments] =
+    const [
+      classes,
+      teachers,
+      subjects,
+      subjectTeacherAssignments,
+      classSubjects,
+      fixedPeriods,
+      massAssignments,
+    ] =
       await Promise.all([
         ctx.db.query("classes").collect(),
         ctx.db.query("teachers").collect(),
         ctx.db.query("subjects").collect(),
+        ctx.db.query("subjectTeacherAssignments").collect(),
         ctx.db.query("classSubjects").collect(),
         ctx.db.query("fixedPeriods").collect(),
         ctx.db.query("massAssignments").collect(),
@@ -18,6 +27,7 @@ export const getData = query({
       classes,
       teachers,
       subjects,
+      subjectTeacherAssignments,
       classSubjects,
       fixedPeriods,
       massAssignments,
@@ -64,7 +74,7 @@ export const removeTeacher = mutation({
 export const createSubject = mutation({
   args: {
     name: v.string(),
-    teacherId: v.id("teachers"),
+    teacherId: v.optional(v.id("teachers")),
   },
   handler: async (ctx, args) => {
     await ctx.db.insert("subjects", {
@@ -77,6 +87,30 @@ export const createSubject = mutation({
 export const removeSubject = mutation({
   args: {
     id: v.id("subjects"),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.delete(args.id);
+  },
+});
+
+export const createSubjectTeacherAssignment = mutation({
+  args: {
+    subjectId: v.id("subjects"),
+    teacherId: v.id("teachers"),
+    classIds: v.array(v.id("classes")),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert("subjectTeacherAssignments", {
+      subjectId: args.subjectId,
+      teacherId: args.teacherId,
+      classIds: args.classIds,
+    });
+  },
+});
+
+export const removeSubjectTeacherAssignment = mutation({
+  args: {
+    id: v.id("subjectTeacherAssignments"),
   },
   handler: async (ctx, args) => {
     await ctx.db.delete(args.id);
