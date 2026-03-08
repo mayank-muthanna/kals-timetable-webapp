@@ -56,6 +56,21 @@ const newMassPeriod = ref(1);
 const newMassClassIds = ref<string[]>([]);
 const isAddingFixed = ref(false);
 const isAddingMass = ref(false);
+const bulkClassInput = ref("");
+const bulkTeacherInput = ref("");
+const bulkSubjectInput = ref("");
+const bulkCoverageInput = ref("");
+const bulkAllocationInput = ref("");
+const isBulkAddingClasses = ref(false);
+const isBulkAddingTeachers = ref(false);
+const isBulkAddingSubjects = ref(false);
+const isBulkAddingCoverage = ref(false);
+const isBulkAddingAllocations = ref(false);
+const bulkClassStatus = ref("");
+const bulkTeacherStatus = ref("");
+const bulkSubjectStatus = ref("");
+const bulkCoverageStatus = ref("");
+const bulkAllocationStatus = ref("");
 
 const classSearch = ref("");
 const teacherSearch = ref("");
@@ -110,6 +125,14 @@ const parseClass = (name: string) => {
 const teacherById = computed(
   () => new Map((data.value?.teachers ?? []).map((teacher) => [teacher._id, teacher])),
 );
+const teacherLookup = computed(() => {
+  const map = new Map<string, (typeof sortedTeachers.value)[number]>();
+  sortedTeachers.value.forEach((teacher) => {
+    const key = normalize(teacher.name);
+    if (!map.has(key)) map.set(key, teacher);
+  });
+  return map;
+});
 
 const sortedClasses = computed<ClassMeta[]>(() =>
   [...(data.value?.classes ?? [])]
@@ -124,6 +147,23 @@ const sortedClasses = computed<ClassMeta[]>(() =>
     })
     .sort((a, b) => compare(a.sortKey, b.sortKey)),
 );
+const classLookup = computed(() => {
+  const map = new Map<string, ClassMeta>();
+  sortedClasses.value.forEach((klass) => {
+    const key = normalize(klass.name);
+    if (!map.has(key)) map.set(key, klass);
+  });
+  return map;
+});
+const classIdsByGrade = computed(() => {
+  const map = new Map<number, string[]>();
+  sortedClasses.value.forEach((klass) => {
+    if (klass.grade === null) return;
+    if (!map.has(klass.grade)) map.set(klass.grade, []);
+    map.get(klass.grade)?.push(klass._id);
+  });
+  return map;
+});
 
 const sortedTeachers = computed(() =>
   [...(data.value?.teachers ?? [])].sort((a, b) => compare(a.name, b.name)),
@@ -198,6 +238,14 @@ const sortedSubjects = computed(() =>
     compare(subjectMeta.value.get(a._id)?.label ?? a.name, subjectMeta.value.get(b._id)?.label ?? b.name),
   ),
 );
+const subjectLookup = computed(() => {
+  const map = new Map<string, (typeof sortedSubjects.value)[number]>();
+  sortedSubjects.value.forEach((subject) => {
+    const key = normalize(subject.name);
+    if (!map.has(key)) map.set(key, subject);
+  });
+  return map;
+});
 
 const groupedSubjects = computed(() => {
   const groups = new Map<string, { name: string; items: typeof sortedSubjects.value }>();
@@ -252,6 +300,8 @@ const filterClassGroups = (search: string) => {
     }))
     .filter((group) => group.classes.length > 0);
 };
+const filteredClassIds = (search: string) =>
+  filterClassGroups(search).flatMap((group) => group.classes.map((klass) => klass._id));
 
 const classList = computed(() =>
   sortedClasses.value.filter((klass) =>
@@ -404,6 +454,244 @@ const toggleEssentialClass = (id: string) => {
 const toggleEssentialGrade = (ids: string[]) => {
   newClassSubjectClassIds.value = toggleGroupInList(newClassSubjectClassIds.value, ids);
 };
+const toggleMassSubject = (id: string) => {
+  newMassSubjectIds.value = toggleIdInList(newMassSubjectIds.value, id);
+};
+const toggleFixedSubject = (id: string) => {
+  newFixedSubjectIds.value = toggleIdInList(newFixedSubjectIds.value, id);
+};
+const selectCoverageFiltered = () => {
+  newSubjectTeacherClassIds.value = [
+    ...new Set([...newSubjectTeacherClassIds.value, ...filteredClassIds(teacherCoverageClassSearch.value)]),
+  ];
+};
+const clearCoverageSelection = () => {
+  newSubjectTeacherClassIds.value = [];
+};
+const selectMassFiltered = () => {
+  newMassClassIds.value = [
+    ...new Set([...newMassClassIds.value, ...filteredClassIds(massClassSearch.value)]),
+  ];
+};
+const clearMassSelection = () => {
+  newMassClassIds.value = [];
+};
+const clearMassSubjects = () => {
+  newMassSubjectIds.value = [];
+};
+const clearFixedSubjects = () => {
+  newFixedSubjectIds.value = [];
+};
+const selectEssentialFiltered = () => {
+  newClassSubjectClassIds.value = [
+    ...new Set([...newClassSubjectClassIds.value, ...filteredClassIds(classGroupSearch.value)]),
+  ];
+};
+const clearEssentialSelection = () => {
+  newClassSubjectClassIds.value = [];
+};
+const splitBulkLines = (input: string) =>
+  input
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+const summarizeBulkNames = (input: string, existingNames: string[]) => {
+  const lines = splitBulkLines(input);
+  const unique = new Set<string>();
+  const existing = new Set(existingNames.map(normalize));
+  let duplicates = 0;
+  lines.forEach((line) => {
+    const key = normalize(line);
+    if (unique.has(key)) {
+      duplicates += 1;
+      return;
+    }
+    unique.add(key);
+  });
+  let alreadyExists = 0;
+  unique.forEach((key) => {
+    if (existing.has(key)) alreadyExists += 1;
+  });
+  return {
+    lines: lines.length,
+    unique: unique.size,
+    ready: unique.size - alreadyExists,
+    duplicates,
+    alreadyExists,
+  };
+};
+
+const resolveScopeText = (scopeText: string) => {
+  const ids = new Set<string>();
+  const invalidTokens: string[] = [];
+  scopeText
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .forEach((token) => {
+      const directClass = classLookup.value.get(normalize(token));
+      if (directClass) {
+        ids.add(directClass._id);
+        return;
+      }
+
+      const cleaned = normalize(token).replace(/^grades?\s+/, "");
+      if (/^\d+$/.test(cleaned)) {
+        const matches = classIdsByGrade.value.get(Number(cleaned)) ?? [];
+        if (matches.length > 0) {
+          matches.forEach((id) => ids.add(id));
+          return;
+        }
+      }
+
+      const rangeMatch = cleaned.match(/^(\d+)\s*-\s*(\d+)$/);
+      if (rangeMatch) {
+        const start = Number(rangeMatch[1]);
+        const end = Number(rangeMatch[2]);
+        let matched = 0;
+        for (let grade = Math.min(start, end); grade <= Math.max(start, end); grade += 1) {
+          const gradeMatches = classIdsByGrade.value.get(grade) ?? [];
+          matched += gradeMatches.length;
+          gradeMatches.forEach((id) => ids.add(id));
+        }
+        if (matched > 0) return;
+      }
+
+      invalidTokens.push(token);
+    });
+
+  return { classIds: [...ids], invalidTokens };
+};
+
+const parseBulkCoverageLines = (input: string) => {
+  const ready: Array<{ subjectId: string; teacherId: string; classIds: string[] }> = [];
+  const errors: string[] = [];
+
+  splitBulkLines(input).forEach((line, index) => {
+    const parts = line.split("|").map((part) => part.trim());
+    if (parts.length < 3) {
+      errors.push(`Line ${index + 1}: use "Subject | Teacher | Classes or grades".`);
+      return;
+    }
+
+    const subject = subjectLookup.value.get(normalize(parts[0]));
+    const teacher = teacherLookup.value.get(normalize(parts[1]));
+    const scope = resolveScopeText(parts.slice(2).join("|"));
+
+    if (!subject) {
+      errors.push(`Line ${index + 1}: subject "${parts[0]}" was not found.`);
+      return;
+    }
+    if (!teacher) {
+      errors.push(`Line ${index + 1}: teacher "${parts[1]}" was not found.`);
+      return;
+    }
+    if (scope.classIds.length === 0) {
+      errors.push(`Line ${index + 1}: no classes matched "${parts.slice(2).join("|")}".`);
+      return;
+    }
+    if (scope.invalidTokens.length > 0) {
+      errors.push(`Line ${index + 1}: unknown classes/grades ${scope.invalidTokens.join(", ")}.`);
+      return;
+    }
+
+    ready.push({
+      subjectId: subject._id,
+      teacherId: teacher._id,
+      classIds: scope.classIds,
+    });
+  });
+
+  return { ready, errors };
+};
+
+const parseBulkAllocationLines = (input: string) => {
+  const ready: Array<{ subjectId: string; weeklyPeriods: number; classIds: string[] }> = [];
+  const errors: string[] = [];
+
+  splitBulkLines(input).forEach((line, index) => {
+    const parts = line.split("|").map((part) => part.trim());
+    if (parts.length < 3) {
+      errors.push(`Line ${index + 1}: use "Subject | Periods per week | Classes or grades".`);
+      return;
+    }
+
+    const subject = subjectLookup.value.get(normalize(parts[0]));
+    const weeklyPeriods = Number(parts[1]);
+    const scope = resolveScopeText(parts.slice(2).join("|"));
+
+    if (!subject) {
+      errors.push(`Line ${index + 1}: subject "${parts[0]}" was not found.`);
+      return;
+    }
+    if (!Number.isFinite(weeklyPeriods) || weeklyPeriods <= 0) {
+      errors.push(`Line ${index + 1}: weekly periods "${parts[1]}" is not valid.`);
+      return;
+    }
+    if (scope.classIds.length === 0) {
+      errors.push(`Line ${index + 1}: no classes matched "${parts.slice(2).join("|")}".`);
+      return;
+    }
+    if (scope.invalidTokens.length > 0) {
+      errors.push(`Line ${index + 1}: unknown classes/grades ${scope.invalidTokens.join(", ")}.`);
+      return;
+    }
+
+    ready.push({
+      subjectId: subject._id,
+      weeklyPeriods,
+      classIds: scope.classIds,
+    });
+  });
+
+  return { ready, errors };
+};
+
+const bulkClassSummary = computed(() =>
+  summarizeBulkNames(
+    bulkClassInput.value,
+    (data.value?.classes ?? []).map((klass) => klass.name),
+  ),
+);
+const bulkTeacherSummary = computed(() =>
+  summarizeBulkNames(
+    bulkTeacherInput.value,
+    (data.value?.teachers ?? []).map((teacher) => teacher.name),
+  ),
+);
+const bulkSubjectSummary = computed(() => {
+  const lines = splitBulkLines(bulkSubjectInput.value);
+  const existing = new Set((data.value?.subjects ?? []).map((subject) => normalize(subject.name)));
+  const unique = new Set<string>();
+  let duplicates = 0;
+  let ready = 0;
+  let errors = 0;
+
+  lines.forEach((line) => {
+    const parts = line.split("|").map((part) => part.trim());
+    const subjectName = parts[0] ?? "";
+    if (!subjectName) {
+      errors += 1;
+      return;
+    }
+    const key = normalize(subjectName);
+    if (unique.has(key)) {
+      duplicates += 1;
+      return;
+    }
+    unique.add(key);
+    if (parts[1] && !teacherLookup.value.get(normalize(parts[1]))) {
+      errors += 1;
+      return;
+    }
+    if (!existing.has(key)) ready += 1;
+  });
+
+  return { lines: lines.length, ready, duplicates, errors };
+});
+const bulkCoveragePreview = computed(() => parseBulkCoverageLines(bulkCoverageInput.value));
+const bulkAllocationPreview = computed(() => parseBulkAllocationLines(bulkAllocationInput.value));
 
 const addClass = async () => {
   if (!newClassName.value.trim()) return;
@@ -427,6 +715,81 @@ const addSubject = async () => {
   newSubjectTeacherId.value = "";
 };
 
+const addBulkClasses = async () => {
+  const lines = splitBulkLines(bulkClassInput.value);
+  if (lines.length === 0) return;
+
+  isBulkAddingClasses.value = true;
+  bulkClassStatus.value = "";
+  try {
+    const existing = new Set((data.value?.classes ?? []).map((klass) => normalize(klass.name)));
+    const uniqueLines = [...new Map(lines.map((line) => [normalize(line), line])).values()];
+    const ready = uniqueLines.filter((line) => !existing.has(normalize(line)));
+    await Promise.all(ready.map((name) => createClass.mutate({ name })));
+    bulkClassStatus.value = `Added ${ready.length} classes. Skipped ${uniqueLines.length - ready.length} existing entries.`;
+    if (ready.length === uniqueLines.length) bulkClassInput.value = "";
+  } finally {
+    isBulkAddingClasses.value = false;
+  }
+};
+
+const addBulkTeachers = async () => {
+  const lines = splitBulkLines(bulkTeacherInput.value);
+  if (lines.length === 0) return;
+
+  isBulkAddingTeachers.value = true;
+  bulkTeacherStatus.value = "";
+  try {
+    const existing = new Set((data.value?.teachers ?? []).map((teacher) => normalize(teacher.name)));
+    const uniqueLines = [...new Map(lines.map((line) => [normalize(line), line])).values()];
+    const ready = uniqueLines.filter((line) => !existing.has(normalize(line)));
+    await Promise.all(ready.map((name) => createTeacher.mutate({ name })));
+    bulkTeacherStatus.value = `Added ${ready.length} teachers. Skipped ${uniqueLines.length - ready.length} existing entries.`;
+    if (ready.length === uniqueLines.length) bulkTeacherInput.value = "";
+  } finally {
+    isBulkAddingTeachers.value = false;
+  }
+};
+
+const addBulkSubjects = async () => {
+  const lines = splitBulkLines(bulkSubjectInput.value);
+  if (lines.length === 0) return;
+
+  isBulkAddingSubjects.value = true;
+  bulkSubjectStatus.value = "";
+  try {
+    const existing = new Set((data.value?.subjects ?? []).map((subject) => normalize(subject.name)));
+    const uniqueLines = [...new Map(lines.map((line) => [normalize(line.split("|")[0] ?? ""), line])).values()];
+    let added = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    for (const line of uniqueLines) {
+      const parts = line.split("|").map((part) => part.trim());
+      const subjectName = parts[0] ?? "";
+      if (!subjectName || existing.has(normalize(subjectName))) {
+        skipped += 1;
+        continue;
+      }
+      const teacherId = parts[1]
+        ? teacherLookup.value.get(normalize(parts[1]))?._id
+        : undefined;
+      if (parts[1] && !teacherId) {
+        errors += 1;
+        continue;
+      }
+
+      await createSubject.mutate({ name: subjectName, teacherId });
+      added += 1;
+    }
+
+    bulkSubjectStatus.value = `Added ${added} subjects. Skipped ${skipped} existing entries. ${errors > 0 ? `${errors} lines need a valid fallback teacher.` : ""}`.trim();
+    if (errors === 0) bulkSubjectInput.value = "";
+  } finally {
+    isBulkAddingSubjects.value = false;
+  }
+};
+
 const addSubjectTeacherCoverage = async () => {
   if (
     !newSubjectTeacherSubjectId.value ||
@@ -447,6 +810,43 @@ const addSubjectTeacherCoverage = async () => {
   newSubjectTeacherClassIds.value = [];
 };
 
+const addBulkCoverage = async () => {
+  const preview = parseBulkCoverageLines(bulkCoverageInput.value);
+  if (preview.ready.length === 0) {
+    bulkCoverageStatus.value =
+      preview.errors[0] ?? "Nothing to import. Use Subject | Teacher | Classes or grades.";
+    return;
+  }
+
+  isBulkAddingCoverage.value = true;
+  bulkCoverageStatus.value = "";
+  try {
+    const existing = new Set(
+      (data.value?.subjectTeacherAssignments ?? []).map(
+        (assignment) =>
+          `${assignment.subjectId}|${assignment.teacherId}|${[...assignment.classIds].sort().join(",")}`,
+      ),
+    );
+    const ready = preview.ready.filter((entry) => {
+      const key = `${entry.subjectId}|${entry.teacherId}|${[...entry.classIds].sort().join(",")}`;
+      return !existing.has(key);
+    });
+    await Promise.all(
+      ready.map((entry) =>
+        createSubjectTeacherAssignment.mutate({
+          subjectId: entry.subjectId,
+          teacherId: entry.teacherId,
+          classIds: entry.classIds,
+        }),
+      ),
+    );
+    bulkCoverageStatus.value = `Added ${ready.length} teacher coverage rows. Skipped ${preview.ready.length - ready.length} existing matches. ${preview.errors.length > 0 ? `${preview.errors.length} lines still need fixes.` : ""}`.trim();
+    if (preview.errors.length === 0) bulkCoverageInput.value = "";
+  } finally {
+    isBulkAddingCoverage.value = false;
+  }
+};
+
 const addClassSubject = async () => {
   if (!newClassSubjectSubjectId.value || newClassSubjectClassIds.value.length === 0) return;
   await Promise.all(
@@ -460,6 +860,42 @@ const addClassSubject = async () => {
   );
   newClassSubjectClassIds.value = [];
   newClassSubjectWeeklyPeriods.value = 1;
+};
+
+const addBulkAllocations = async () => {
+  const preview = parseBulkAllocationLines(bulkAllocationInput.value);
+  if (preview.ready.length === 0) {
+    bulkAllocationStatus.value =
+      preview.errors[0] ?? "Nothing to import. Use Subject | Periods per week | Classes or grades.";
+    return;
+  }
+
+  isBulkAddingAllocations.value = true;
+  bulkAllocationStatus.value = "";
+  try {
+    const existing = new Set(
+      (data.value?.classSubjects ?? []).map(
+        (entry) => `${entry.classId}|${entry.subjectId}|${entry.weeklyPeriods}`,
+      ),
+    );
+    const ready = preview.ready.flatMap((entry) =>
+      entry.classIds
+        .filter(
+          (classId) =>
+            !existing.has(`${classId}|${entry.subjectId}|${entry.weeklyPeriods}`),
+        )
+        .map((classId) => ({
+          classId,
+          subjectId: entry.subjectId,
+          weeklyPeriods: entry.weeklyPeriods,
+        })),
+    );
+    await Promise.all(ready.map((entry) => createClassSubject.mutate(entry)));
+    bulkAllocationStatus.value = `Added ${ready.length} essential allocations. Skipped ${preview.ready.reduce((count, entry) => count + entry.classIds.length, 0) - ready.length} existing matches. ${preview.errors.length > 0 ? `${preview.errors.length} lines still need fixes.` : ""}`.trim();
+    if (preview.errors.length === 0) bulkAllocationInput.value = "";
+  } finally {
+    isBulkAddingAllocations.value = false;
+  }
 };
 
 const addFixed = async () => {
@@ -861,10 +1297,176 @@ const resolveWarning = async (warning: WarningItem) => {
         </div>
       </section>
 
+      <section class="rounded-3xl border border-[#f0cdbb] bg-[#fff0e7] p-5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-sm uppercase tracking-[0.16em] text-[#a26045]">Fast entry</p>
+            <h2 class="mt-1 text-2xl font-semibold">Bulk setup for large schools</h2>
+            <p class="mt-2 max-w-3xl text-sm text-[#8a4b32]">
+              Use this first when you have a lot of setup to enter. Paste lists or subject mappings,
+              save them in one go, then use the manual sections below only for cleanup.
+            </p>
+          </div>
+          <div class="rounded-2xl border border-[#f0cdbb] bg-white px-4 py-3 text-sm text-[#8a4b32]">
+            Supported shortcuts: exact class names like <span class="font-medium">1A</span>, grades like
+            <span class="font-medium">7</span>, and ranges like <span class="font-medium">9-12</span>.
+          </div>
+        </div>
+
+        <div class="mt-5 grid gap-5 xl:grid-cols-2">
+          <div class="rounded-2xl border border-[#f0cdbb] bg-white p-4">
+            <div class="flex items-center justify-between gap-3">
+              <h3 class="font-semibold">Bulk classes</h3>
+              <span class="text-xs text-[#8a4b32]">{{ bulkClassSummary.ready }} ready</span>
+            </div>
+            <p class="mt-1 text-xs text-[#8a4b32]">One class per line. Example: 1A, 1B, 2A.</p>
+            <textarea
+              v-model="bulkClassInput"
+              rows="7"
+              placeholder="1A&#10;1B&#10;2A&#10;2B"
+              class="mt-3 w-full rounded-2xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3"
+            />
+            <p class="mt-2 text-xs text-[#8a4b32]">
+              {{ bulkClassSummary.lines }} lines · {{ bulkClassSummary.duplicates }} duplicate lines ·
+              {{ bulkClassSummary.alreadyExists }} already exist
+            </p>
+            <button
+              @click="addBulkClasses"
+              :disabled="isBulkAddingClasses || bulkClassSummary.ready === 0"
+              class="mt-3 w-full rounded-xl bg-[#d17c5a] px-4 py-3 text-white disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {{ isBulkAddingClasses ? "Adding classes..." : `Add ${bulkClassSummary.ready} classes` }}
+            </button>
+            <p v-if="bulkClassStatus" class="mt-2 text-xs text-[#8a4b32]">{{ bulkClassStatus }}</p>
+          </div>
+
+          <div class="rounded-2xl border border-[#f0cdbb] bg-white p-4">
+            <div class="flex items-center justify-between gap-3">
+              <h3 class="font-semibold">Bulk teachers</h3>
+              <span class="text-xs text-[#8a4b32]">{{ bulkTeacherSummary.ready }} ready</span>
+            </div>
+            <p class="mt-1 text-xs text-[#8a4b32]">One teacher code per line. Example: LDI, BMK, CNM.</p>
+            <textarea
+              v-model="bulkTeacherInput"
+              rows="7"
+              placeholder="LDI&#10;RU&#10;BMK&#10;CNM"
+              class="mt-3 w-full rounded-2xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3"
+            />
+            <p class="mt-2 text-xs text-[#8a4b32]">
+              {{ bulkTeacherSummary.lines }} lines · {{ bulkTeacherSummary.duplicates }} duplicate lines ·
+              {{ bulkTeacherSummary.alreadyExists }} already exist
+            </p>
+            <button
+              @click="addBulkTeachers"
+              :disabled="isBulkAddingTeachers || bulkTeacherSummary.ready === 0"
+              class="mt-3 w-full rounded-xl bg-[#d17c5a] px-4 py-3 text-white disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {{ isBulkAddingTeachers ? "Adding teachers..." : `Add ${bulkTeacherSummary.ready} teachers` }}
+            </button>
+            <p v-if="bulkTeacherStatus" class="mt-2 text-xs text-[#8a4b32]">{{ bulkTeacherStatus }}</p>
+          </div>
+
+          <div class="rounded-2xl border border-[#f0cdbb] bg-white p-4">
+            <div class="flex items-center justify-between gap-3">
+              <h3 class="font-semibold">Bulk subjects</h3>
+              <span class="text-xs text-[#8a4b32]">{{ bulkSubjectSummary.ready }} ready</span>
+            </div>
+            <p class="mt-1 text-xs text-[#8a4b32]">
+              One subject per line. Optional format: <span class="font-medium">Subject | fallback teacher</span>.
+            </p>
+            <textarea
+              v-model="bulkSubjectInput"
+              rows="7"
+              placeholder="Eng1&#10;Math&#10;Bio | KUS&#10;Comp | CHARAN"
+              class="mt-3 w-full rounded-2xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3"
+            />
+            <p class="mt-2 text-xs text-[#8a4b32]">
+              {{ bulkSubjectSummary.lines }} lines · {{ bulkSubjectSummary.duplicates }} duplicate lines ·
+              {{ bulkSubjectSummary.errors }} lines need a valid fallback teacher
+            </p>
+            <button
+              @click="addBulkSubjects"
+              :disabled="isBulkAddingSubjects || bulkSubjectSummary.ready === 0"
+              class="mt-3 w-full rounded-xl bg-[#d17c5a] px-4 py-3 text-white disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {{ isBulkAddingSubjects ? "Adding subjects..." : `Add ${bulkSubjectSummary.ready} subjects` }}
+            </button>
+            <p v-if="bulkSubjectStatus" class="mt-2 text-xs text-[#8a4b32]">{{ bulkSubjectStatus }}</p>
+          </div>
+
+          <div class="rounded-2xl border border-[#f0cdbb] bg-white p-4">
+            <div class="flex items-center justify-between gap-3">
+              <h3 class="font-semibold">Bulk teacher coverage</h3>
+              <span class="text-xs text-[#8a4b32]">{{ bulkCoveragePreview.ready.length }} ready lines</span>
+            </div>
+            <p class="mt-1 text-xs text-[#8a4b32]">
+              Format: <span class="font-medium">Subject | Teacher | Classes or grades</span>.
+            </p>
+            <textarea
+              v-model="bulkCoverageInput"
+              rows="7"
+              placeholder="Eng1 | LDI | 1&#10;Eng1 | RU | 1A, 1B&#10;Eng1 | BMK | 2, 3&#10;Eng1 | CNM | 9-12"
+              class="mt-3 w-full rounded-2xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3"
+            />
+            <div class="mt-2 rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-3 py-3 text-xs text-[#8a4b32]">
+              <p>{{ bulkCoveragePreview.ready.length }} ready · {{ bulkCoveragePreview.errors.length }} lines need fixes</p>
+              <p v-if="bulkCoveragePreview.errors[0]" class="mt-1">{{ bulkCoveragePreview.errors[0] }}</p>
+            </div>
+            <button
+              @click="addBulkCoverage"
+              :disabled="isBulkAddingCoverage || bulkCoveragePreview.ready.length === 0"
+              class="mt-3 w-full rounded-xl bg-[#d17c5a] px-4 py-3 text-white disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {{ isBulkAddingCoverage ? "Saving teacher coverage..." : `Add ${bulkCoveragePreview.ready.length} coverage lines` }}
+            </button>
+            <p v-if="bulkCoverageStatus" class="mt-2 text-xs text-[#8a4b32]">{{ bulkCoverageStatus }}</p>
+          </div>
+
+          <div class="rounded-2xl border border-[#f0cdbb] bg-white p-4 xl:col-span-2">
+            <div class="flex items-center justify-between gap-3">
+              <h3 class="font-semibold">Bulk essential allocations</h3>
+              <span class="text-xs text-[#8a4b32]">{{ bulkAllocationPreview.ready.length }} ready lines</span>
+            </div>
+            <p class="mt-1 text-xs text-[#8a4b32]">
+              Format: <span class="font-medium">Subject | Weekly periods | Classes or grades</span>.
+              Example: <span class="font-medium">Math | 6 | 1-5</span> or <span class="font-medium">Bio | 3 | 9A, 9B, 9C</span>.
+            </p>
+            <textarea
+              v-model="bulkAllocationInput"
+              rows="6"
+              placeholder="Eng1 | 6 | 1-12&#10;Math | 6 | 1-10&#10;Bio | 3 | 9A, 9B, 9C, 10A, 10B, 10C"
+              class="mt-3 w-full rounded-2xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3"
+            />
+            <div class="mt-2 rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-3 py-3 text-xs text-[#8a4b32]">
+              <p>{{ bulkAllocationPreview.ready.length }} ready · {{ bulkAllocationPreview.errors.length }} lines need fixes</p>
+              <p v-if="bulkAllocationPreview.errors[0]" class="mt-1">{{ bulkAllocationPreview.errors[0] }}</p>
+            </div>
+            <button
+              @click="addBulkAllocations"
+              :disabled="isBulkAddingAllocations || bulkAllocationPreview.ready.length === 0"
+              class="mt-3 w-full rounded-xl bg-[#d17c5a] px-4 py-3 text-white disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {{ isBulkAddingAllocations ? "Adding essential allocations..." : `Add ${bulkAllocationPreview.ready.length} allocation lines` }}
+            </button>
+            <p v-if="bulkAllocationStatus" class="mt-2 text-xs text-[#8a4b32]">{{ bulkAllocationStatus }}</p>
+          </div>
+        </div>
+      </section>
+
       <section class="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <div class="space-y-6">
           <div class="rounded-3xl border border-[#f0cdbb] bg-[#ffe7dc] p-5">
-            <h2 class="text-xl font-semibold">Classes and teachers</h2>
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-xl font-semibold">Manual classes and teachers</h2>
+                <p class="mt-1 text-sm text-[#8a4b32]">
+                  Use this area for small corrections after the bulk setup above.
+                </p>
+              </div>
+              <div class="rounded-xl border border-[#f0cdbb] bg-white px-3 py-2 text-xs text-[#8a4b32]">
+                Best for one-off edits
+              </div>
+            </div>
             <div class="mt-4 grid gap-5 lg:grid-cols-2">
               <div>
                 <div class="flex gap-2">
@@ -896,7 +1498,17 @@ const resolveWarning = async (warning: WarningItem) => {
           </div>
 
           <div class="rounded-3xl border border-[#f0cdbb] bg-[#ffe7dc] p-5">
-            <h2 class="text-xl font-semibold">Subject catalogue</h2>
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-xl font-semibold">Manual subject editor</h2>
+                <p class="mt-1 text-sm text-[#8a4b32]">
+                  Create or adjust individual subjects and teacher mappings here.
+                </p>
+              </div>
+              <div class="rounded-xl border border-[#f0cdbb] bg-white px-3 py-2 text-xs text-[#8a4b32]">
+                Best for cleanup
+              </div>
+            </div>
             <p class="mt-1 text-sm text-[#8a4b32]">
               Subjects are created once. Teacher coverage is assigned separately per class group so one subject can have many teachers.
             </p>
@@ -938,6 +1550,14 @@ const resolveWarning = async (warning: WarningItem) => {
               </select>
               <p class="text-xs text-[#8a4b32]">Then choose the teacher who handles that subject for the classes below.</p>
               <input v-model="teacherCoverageClassSearch" placeholder="Filter classes or grade" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
+              <div class="mt-3 flex flex-wrap gap-2 text-xs">
+                <button @click="selectCoverageFiltered" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2 text-[#8a4b32]">
+                  Select filtered classes
+                </button>
+                <button @click="clearCoverageSelection" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2 text-[#8a4b32]">
+                  Clear selection
+                </button>
+              </div>
               <div class="mt-3 max-h-56 space-y-3 overflow-y-auto">
                 <div v-for="group in filterClassGroups(teacherCoverageClassSearch)" :key="`coverage-${group.label}`" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] p-3">
                   <div class="flex items-center justify-between">
@@ -1017,10 +1637,26 @@ const resolveWarning = async (warning: WarningItem) => {
                 <h3 class="font-semibold">Mass lock</h3>
                 <p class="mt-1 text-xs text-[#8a4b32]">Use this for assemblies, games, labs, swimming, or any subject that must happen at the same time across many classes.</p>
                 <input v-model="massSubjectSearch" placeholder="Filter subjects" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
-                <select v-model="newMassSubjectIds" multiple class="mt-3 h-32 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
-                  <option v-for="subject in filterSubjects(massSubjectSearch)" :key="subject._id" :value="subject._id">{{ subjectTitle(subject._id) }}</option>
-                </select>
-                <p class="mt-2 text-xs text-[#8a4b32]">Hold Ctrl or Cmd to select multiple subjects for the same slot.</p>
+                <div class="mt-3 flex items-center justify-between gap-3 text-xs text-[#8a4b32]">
+                  <span>{{ newMassSubjectIds.length }} subjects selected</span>
+                  <button @click="clearMassSubjects" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2">
+                    Clear subjects
+                  </button>
+                </div>
+                <div class="mt-3 max-h-40 overflow-y-auto rounded-xl border border-[#f0cdbb] bg-[#fff8f3] p-3">
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      v-for="subject in filterSubjects(massSubjectSearch)"
+                      :key="subject._id"
+                      @click="toggleMassSubject(subject._id)"
+                      class="rounded-full border px-3 py-1 text-sm"
+                      :class="newMassSubjectIds.includes(subject._id) ? 'border-[#d17c5a] bg-[#d17c5a] text-white' : 'border-[#f0cdbb] bg-white'"
+                    >
+                      {{ subjectTitle(subject._id) }}
+                    </button>
+                  </div>
+                </div>
+                <p class="mt-2 text-xs text-[#8a4b32]">Click to add or remove subjects. No Ctrl or Cmd key needed.</p>
                 <div class="mt-3 grid grid-cols-2 gap-3">
                   <select v-model="newMassDay" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
                     <option v-for="day in dayOptions" :key="day.index" :value="day.index">{{ day.label }}</option>
@@ -1028,6 +1664,14 @@ const resolveWarning = async (warning: WarningItem) => {
                   <input v-model="newMassPeriod" type="number" min="1" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
                 </div>
                 <input v-model="massClassSearch" placeholder="Filter classes or grade" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
+                <div class="mt-3 flex flex-wrap gap-2 text-xs">
+                  <button @click="selectMassFiltered" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2 text-[#8a4b32]">
+                    Select filtered classes
+                  </button>
+                  <button @click="clearMassSelection" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2 text-[#8a4b32]">
+                    Clear classes
+                  </button>
+                </div>
                 <div class="mt-3 max-h-56 space-y-3 overflow-y-auto">
                   <div v-for="group in filterClassGroups(massClassSearch)" :key="group.label" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] p-3">
                     <div class="flex items-center justify-between">
@@ -1055,10 +1699,26 @@ const resolveWarning = async (warning: WarningItem) => {
                   <option v-for="klass in filterClassGroups(fixedClassSearch).flatMap((group) => group.classes)" :key="klass._id" :value="klass._id">{{ klass.name }}</option>
                 </select>
                 <input v-model="fixedSubjectSearch" placeholder="Filter subjects" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
-                <select v-model="newFixedSubjectIds" multiple class="mt-3 h-32 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
-                  <option v-for="subject in filterSubjects(fixedSubjectSearch)" :key="subject._id" :value="subject._id">{{ subjectTitle(subject._id) }}</option>
-                </select>
-                <p class="mt-2 text-xs text-[#8a4b32]">Hold Ctrl or Cmd to select multiple subjects for the same slot.</p>
+                <div class="mt-3 flex items-center justify-between gap-3 text-xs text-[#8a4b32]">
+                  <span>{{ newFixedSubjectIds.length }} subjects selected</span>
+                  <button @click="clearFixedSubjects" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2">
+                    Clear subjects
+                  </button>
+                </div>
+                <div class="mt-3 max-h-40 overflow-y-auto rounded-xl border border-[#f0cdbb] bg-[#fff8f3] p-3">
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      v-for="subject in filterSubjects(fixedSubjectSearch)"
+                      :key="subject._id"
+                      @click="toggleFixedSubject(subject._id)"
+                      class="rounded-full border px-3 py-1 text-sm"
+                      :class="newFixedSubjectIds.includes(subject._id) ? 'border-[#d17c5a] bg-[#d17c5a] text-white' : 'border-[#f0cdbb] bg-white'"
+                    >
+                      {{ subjectTitle(subject._id) }}
+                    </button>
+                  </div>
+                </div>
+                <p class="mt-2 text-xs text-[#8a4b32]">Click to add or remove subjects. No Ctrl or Cmd key needed.</p>
                 <div class="mt-3 grid grid-cols-2 gap-3">
                   <select v-model="newFixedDay" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
                     <option v-for="day in dayOptions" :key="day.index" :value="day.index">{{ day.label }}</option>
@@ -1082,6 +1742,14 @@ const resolveWarning = async (warning: WarningItem) => {
             </select>
             <input v-model="newClassSubjectWeeklyPeriods" type="number" min="1" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
             <input v-model="classGroupSearch" placeholder="Filter classes or grade" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+            <div class="mt-3 flex flex-wrap gap-2 text-xs">
+              <button @click="selectEssentialFiltered" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2 text-[#8a4b32]">
+                Select filtered classes
+              </button>
+              <button @click="clearEssentialSelection" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2 text-[#8a4b32]">
+                Clear selection
+              </button>
+            </div>
             <div class="mt-3 max-h-72 space-y-3 overflow-y-auto">
               <div v-for="group in filterClassGroups(classGroupSearch)" :key="group.label" class="rounded-xl border border-[#f0cdbb] bg-white p-3">
                 <div class="flex items-center justify-between">
