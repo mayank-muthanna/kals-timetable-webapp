@@ -56,21 +56,29 @@ const newMassPeriod = ref(1);
 const newMassClassIds = ref<string[]>([]);
 const isAddingFixed = ref(false);
 const isAddingMass = ref(false);
+const newLockSubjectIds = ref<string[]>([]);
+const newLockDayIds = ref<number[]>([0]);
+const newLockPeriod = ref(1);
+const newLockClassIds = ref<string[]>([]);
+const isAddingLocks = ref(false);
 const bulkClassInput = ref("");
 const bulkTeacherInput = ref("");
 const bulkSubjectInput = ref("");
 const bulkCoverageInput = ref("");
 const bulkAllocationInput = ref("");
+const bulkLockInput = ref("");
 const isBulkAddingClasses = ref(false);
 const isBulkAddingTeachers = ref(false);
 const isBulkAddingSubjects = ref(false);
 const isBulkAddingCoverage = ref(false);
 const isBulkAddingAllocations = ref(false);
+const isBulkAddingLocks = ref(false);
 const bulkClassStatus = ref("");
 const bulkTeacherStatus = ref("");
 const bulkSubjectStatus = ref("");
 const bulkCoverageStatus = ref("");
 const bulkAllocationStatus = ref("");
+const bulkLockStatus = ref("");
 
 const classSearch = ref("");
 const teacherSearch = ref("");
@@ -90,11 +98,26 @@ const fixedClassSearch = ref("");
 const fixedSubjectSearch = ref("");
 const massSubjectSearch = ref("");
 const massClassSearch = ref("");
+const lockBuilderSubjectSearch = ref("");
+const lockBuilderClassSearch = ref("");
 const lockGradeFilter = ref("");
 const lockSubjectFilter = ref("");
 const lockDayFilter = ref("all");
-const timetableSearch = ref("");
+const timetableClassFilter = ref("");
+const timetableSubjectFilter = ref("");
+const timetableTeacherFilter = ref("");
 const collapsedCoverageSubjectIds = ref<string[]>([]);
+const warningSearch = ref("");
+const warningCategoryFilter = ref("all");
+const collapsedSections = ref<Record<string, boolean>>({
+  bulk: false,
+  manualSetup: false,
+  subjectEditor: false,
+  lockBuilder: false,
+  essential: false,
+  constraints: false,
+  timetable: false,
+});
 
 const dayOptions = [
   { label: "Monday", short: "Mon", index: 0, periods: 8 },
@@ -423,6 +446,10 @@ const toggleIdInList = (current: string[], id: string) =>
   current.includes(id)
     ? current.filter((item) => item !== id)
     : [...current, id];
+const toggleNumberInList = (current: number[], value: number) =>
+  current.includes(value)
+    ? current.filter((item) => item !== value)
+    : [...current, value].sort((left, right) => left - right);
 
 const toggleGroupInList = (current: string[], ids: string[]) => {
   const allSelected = ids.every((id) => current.includes(id));
@@ -460,6 +487,18 @@ const toggleMassSubject = (id: string) => {
 const toggleFixedSubject = (id: string) => {
   newFixedSubjectIds.value = toggleIdInList(newFixedSubjectIds.value, id);
 };
+const toggleLockSubject = (id: string) => {
+  newLockSubjectIds.value = toggleIdInList(newLockSubjectIds.value, id);
+};
+const toggleLockClass = (id: string) => {
+  newLockClassIds.value = toggleIdInList(newLockClassIds.value, id);
+};
+const toggleLockGrade = (ids: string[]) => {
+  newLockClassIds.value = toggleGroupInList(newLockClassIds.value, ids);
+};
+const toggleLockDay = (day: number) => {
+  newLockDayIds.value = toggleNumberInList(newLockDayIds.value, day);
+};
 const selectCoverageFiltered = () => {
   newSubjectTeacherClassIds.value = [
     ...new Set([...newSubjectTeacherClassIds.value, ...filteredClassIds(teacherCoverageClassSearch.value)]),
@@ -482,6 +521,20 @@ const clearMassSubjects = () => {
 const clearFixedSubjects = () => {
   newFixedSubjectIds.value = [];
 };
+const selectLockFiltered = () => {
+  newLockClassIds.value = [
+    ...new Set([...newLockClassIds.value, ...filteredClassIds(lockBuilderClassSearch.value)]),
+  ];
+};
+const clearLockClasses = () => {
+  newLockClassIds.value = [];
+};
+const clearLockSubjects = () => {
+  newLockSubjectIds.value = [];
+};
+const clearLockDays = () => {
+  newLockDayIds.value = [];
+};
 const selectEssentialFiltered = () => {
   newClassSubjectClassIds.value = [
     ...new Set([...newClassSubjectClassIds.value, ...filteredClassIds(classGroupSearch.value)]),
@@ -495,6 +548,13 @@ const splitBulkLines = (input: string) =>
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+const sectionCollapsed = (key: string) => collapsedSections.value[key] ?? false;
+const toggleSection = (key: string) => {
+  collapsedSections.value = {
+    ...collapsedSections.value,
+    [key]: !sectionCollapsed(key),
+  };
+};
 
 const summarizeBulkNames = (input: string, existingNames: string[]) => {
   const lines = splitBulkLines(input);
@@ -562,6 +622,89 @@ const resolveScopeText = (scopeText: string) => {
     });
 
   return { classIds: [...ids], invalidTokens };
+};
+
+const resolveDayText = (dayText: string) => {
+  const dayIds = new Set<number>();
+  const invalidTokens: string[] = [];
+
+  dayText
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .forEach((token) => {
+      const normalizedToken = normalize(token);
+      const directMatch = dayOptions.find(
+        (day) =>
+          normalize(day.label) === normalizedToken ||
+          normalize(day.short) === normalizedToken ||
+          String(day.index + 1) === normalizedToken,
+      );
+
+      if (directMatch) {
+        dayIds.add(directMatch.index);
+        return;
+      }
+
+      invalidTokens.push(token);
+    });
+
+  return { dayIds: [...dayIds].sort((left, right) => left - right), invalidTokens };
+};
+
+const parseBulkLockLines = (input: string) => {
+  const ready: Array<{ subjectIds: string[]; dayIds: number[]; period: number; classIds: string[] }> = [];
+  const errors: string[] = [];
+
+  splitBulkLines(input).forEach((line, index) => {
+    const parts = line.split("|").map((part) => part.trim());
+    if (parts.length < 4) {
+      errors.push(`Line ${index + 1}: use "Subject list | Days | Period | Classes or grades".`);
+      return;
+    }
+
+    const subjectNames = parts[0]
+      .split(",")
+      .map((name) => name.trim())
+      .filter(Boolean);
+    const subjectIds = subjectNames.map((name) => subjectLookup.value.get(normalize(name))?._id);
+    const dayScope = resolveDayText(parts[1]);
+    const period = Number(parts[2]);
+    const classScope = resolveScopeText(parts.slice(3).join("|"));
+    const missingSubjects = subjectNames.filter(
+      (_, subjectIndex) => !subjectIds[subjectIndex],
+    );
+
+    if (missingSubjects.length > 0) {
+      errors.push(`Line ${index + 1}: subjects not found - ${missingSubjects.join(", ")}.`);
+      return;
+    }
+    if (!Number.isFinite(period) || period <= 0) {
+      errors.push(`Line ${index + 1}: period "${parts[2]}" is not valid.`);
+      return;
+    }
+    if (dayScope.dayIds.length === 0 || dayScope.invalidTokens.length > 0) {
+      errors.push(`Line ${index + 1}: invalid days ${dayScope.invalidTokens.join(", ") || parts[1]}.`);
+      return;
+    }
+    if (classScope.classIds.length === 0) {
+      errors.push(`Line ${index + 1}: no classes matched "${parts.slice(3).join("|")}".`);
+      return;
+    }
+    if (classScope.invalidTokens.length > 0) {
+      errors.push(`Line ${index + 1}: unknown classes/grades ${classScope.invalidTokens.join(", ")}.`);
+      return;
+    }
+
+    ready.push({
+      subjectIds: subjectIds.filter((value): value is string => Boolean(value)),
+      dayIds: dayScope.dayIds,
+      period,
+      classIds: classScope.classIds,
+    });
+  });
+
+  return { ready, errors };
 };
 
 const parseBulkCoverageLines = (input: string) => {
@@ -692,6 +835,7 @@ const bulkSubjectSummary = computed(() => {
 });
 const bulkCoveragePreview = computed(() => parseBulkCoverageLines(bulkCoverageInput.value));
 const bulkAllocationPreview = computed(() => parseBulkAllocationLines(bulkAllocationInput.value));
+const bulkLockPreview = computed(() => parseBulkLockLines(bulkLockInput.value));
 
 const addClass = async () => {
   if (!newClassName.value.trim()) return;
@@ -898,6 +1042,125 @@ const addBulkAllocations = async () => {
   }
 };
 
+const createLocksForSelection = async (entry: {
+  subjectIds: string[];
+  dayIds: number[];
+  period: number;
+  classIds: string[];
+}) => {
+  const dayIds = [...new Set(entry.dayIds)].sort((left, right) => left - right);
+
+  if (entry.classIds.length === 1) {
+    await Promise.all(
+      dayIds.map((day) =>
+        createFixedPeriod.mutate({
+          classId: entry.classIds[0],
+          subjectIds: entry.subjectIds,
+          day,
+          period: entry.period,
+        }),
+      ),
+    );
+    return { created: dayIds.length, mode: "fixed" as const };
+  }
+
+  await Promise.all(
+    dayIds.map((day) =>
+      createMassAssignment.mutate({
+        subjectIds: entry.subjectIds,
+        classIds: entry.classIds,
+        day,
+        period: entry.period,
+      }),
+    ),
+  );
+  return { created: dayIds.length, mode: "mass" as const };
+};
+
+const addLock = async () => {
+  if (
+    newLockSubjectIds.value.length === 0 ||
+    newLockDayIds.value.length === 0 ||
+    newLockClassIds.value.length === 0
+  ) {
+    return;
+  }
+
+  isAddingLocks.value = true;
+  try {
+    await createLocksForSelection({
+      subjectIds: newLockSubjectIds.value,
+      dayIds: newLockDayIds.value,
+      period: Number(newLockPeriod.value),
+      classIds: newLockClassIds.value,
+    });
+    newLockDayIds.value = [0];
+    newLockPeriod.value = 1;
+    newLockClassIds.value = [];
+    newLockSubjectIds.value = [];
+  } finally {
+    isAddingLocks.value = false;
+  }
+};
+
+const addBulkLocks = async () => {
+  const preview = parseBulkLockLines(bulkLockInput.value);
+  if (preview.ready.length === 0) {
+    bulkLockStatus.value =
+      preview.errors[0] ?? "Nothing to import. Use Subject list | Days | Period | Classes or grades.";
+    return;
+  }
+
+  isBulkAddingLocks.value = true;
+  bulkLockStatus.value = "";
+  try {
+    const existingFixed = new Set(
+      (data.value?.fixedPeriods ?? []).map(
+        (fixed) =>
+          `${fixed.classId}|${[...getLockSubjectIds(fixed)].sort().join(",")}|${fixed.day}|${fixed.period}`,
+      ),
+    );
+    const existingMass = new Set(
+      (data.value?.massAssignments ?? []).map(
+        (mass) =>
+          `${[...mass.classIds].sort().join(",")}|${[...getLockSubjectIds(mass)].sort().join(",")}|${mass.day}|${mass.period}`,
+      ),
+    );
+
+    let created = 0;
+    let skipped = 0;
+
+    for (const entry of preview.ready) {
+      const subjectKey = [...entry.subjectIds].sort().join(",");
+      const dayIds = [...new Set(entry.dayIds)].sort((left, right) => left - right);
+      const classKey = [...entry.classIds].sort().join(",");
+      const newDays = dayIds.filter((day) => {
+        if (entry.classIds.length === 1) {
+          return !existingFixed.has(`${entry.classIds[0]}|${subjectKey}|${day}|${entry.period}`);
+        }
+        return !existingMass.has(`${classKey}|${subjectKey}|${day}|${entry.period}`);
+      });
+
+      if (newDays.length === 0) {
+        skipped += dayIds.length;
+        continue;
+      }
+
+      const result = await createLocksForSelection({
+        ...entry,
+        dayIds: newDays,
+      });
+      created += result.created;
+      skipped += dayIds.length - newDays.length;
+    }
+
+    bulkLockStatus.value = `Added ${created} non-essential locks. Skipped ${skipped} existing matches. ${preview.errors.length > 0 ? `${preview.errors.length} lines still need fixes.` : ""}`.trim();
+    if (preview.errors.length === 0) bulkLockInput.value = "";
+  } finally {
+    isBulkAddingLocks.value = false;
+  }
+};
+
 const addFixed = async () => {
   if (!newFixedClassId.value || newFixedSubjectIds.value.length === 0) return;
   isAddingFixed.value = true;
@@ -1019,6 +1282,12 @@ const filteredMassLocks = computed(() => {
     );
   });
 });
+
+const splitCombinedLabel = (value: string) =>
+  value
+    .split("/")
+    .map((item) => item.trim())
+    .filter(Boolean);
 
 const timetable = computed(() => {
   if (!data.value) return { classSchedules: [], warnings: [] as WarningItem[] };
@@ -1245,13 +1514,158 @@ const timetable = computed(() => {
   return { classSchedules, warnings };
 });
 
-const visibleSchedules = computed(() =>
-  timetable.value.classSchedules.filter(
-    (schedule) =>
-      !normalize(timetableSearch.value) ||
-      normalize(schedule.className).includes(normalize(timetableSearch.value)),
+const scheduleMatchesTimetableFilters = (
+  schedule: (typeof timetable.value.classSchedules)[number],
+) => {
+  const classTerm = normalize(timetableClassFilter.value);
+  const subjectTerm = normalize(
+    timetableSubjectFilter.value ? subjectTitle(timetableSubjectFilter.value) : "",
+  );
+  const teacherTerm = normalize(
+    timetableTeacherFilter.value
+      ? teacherById.value.get(timetableTeacherFilter.value)?.name ?? ""
+      : "",
+  );
+
+  if (classTerm && !normalize(schedule.className).includes(classTerm)) {
+    return false;
+  }
+
+  if (!subjectTerm && !teacherTerm) {
+    return true;
+  }
+
+  return schedule.grid.some((day) =>
+    day.some((cell) => {
+      if (!cell) return false;
+      const subjectMatch =
+        !subjectTerm ||
+        splitCombinedLabel(cell.subjectName).some(
+          (subjectName) => normalize(subjectName) === subjectTerm,
+        );
+      const teacherMatch =
+        !teacherTerm ||
+        splitCombinedLabel(cell.teacherName).some(
+          (teacherName) => normalize(teacherName) === teacherTerm,
+        );
+      return subjectMatch && teacherMatch;
+    }),
+  );
+};
+
+const timetableCellMatches = (
+  cell: { subjectName: string; teacherName: string; locked: boolean } | null,
+) => {
+  if (!cell) return false;
+  const subjectTerm = normalize(
+    timetableSubjectFilter.value ? subjectTitle(timetableSubjectFilter.value) : "",
+  );
+  const teacherTerm = normalize(
+    timetableTeacherFilter.value
+      ? teacherById.value.get(timetableTeacherFilter.value)?.name ?? ""
+      : "",
+  );
+  const subjectMatch =
+    !subjectTerm ||
+    splitCombinedLabel(cell.subjectName).some(
+      (subjectName) => normalize(subjectName) === subjectTerm,
+    );
+  const teacherMatch =
+    !teacherTerm ||
+    splitCombinedLabel(cell.teacherName).some(
+      (teacherName) => normalize(teacherName) === teacherTerm,
+    );
+  return subjectMatch && teacherMatch;
+};
+
+const hasTimetableFilters = computed(
+  () =>
+    Boolean(timetableClassFilter.value.trim()) ||
+    Boolean(timetableSubjectFilter.value) ||
+    Boolean(timetableTeacherFilter.value),
+);
+const showingAggregateTimetable = computed(
+  () => Boolean(timetableSubjectFilter.value) || Boolean(timetableTeacherFilter.value),
+);
+
+const aggregateTimetable = computed(() => {
+  const classTerm = normalize(timetableClassFilter.value);
+  return dayOptions.map((day) => ({
+    day,
+    slots: Array.from({ length: 8 }, (_, index) => {
+      const period = index + 1;
+      const matches = timetable.value.classSchedules
+        .flatMap((schedule) => {
+          if (classTerm && !normalize(schedule.className).includes(classTerm)) {
+            return [];
+          }
+          const cell = schedule.grid[day.index]?.[period] ?? null;
+          if (!timetableCellMatches(cell)) {
+            return [];
+          }
+          return [
+            {
+              className: schedule.className,
+              subjectName: cell?.subjectName ?? "",
+              teacherName: cell?.teacherName ?? "",
+              locked: cell?.locked ?? false,
+            },
+          ];
+        })
+        .sort((left, right) => compare(left.className, right.className));
+
+      return {
+        period,
+        matches,
+      };
+    }),
+  }));
+});
+
+const aggregateMatchCount = computed(() =>
+  aggregateTimetable.value.reduce(
+    (count, day) =>
+      count + day.slots.reduce((dayCount, slot) => dayCount + slot.matches.length, 0),
+    0,
   ),
 );
+
+const visibleSchedules = computed(() =>
+  timetable.value.classSchedules.filter((schedule) => scheduleMatchesTimetableFilters(schedule)),
+);
+
+const warningCategory = (warning: WarningItem) => {
+  if (warning.message.startsWith("Teacher conflict")) return "Teacher conflicts";
+  if (warning.message.startsWith("No teacher mapping")) return "Missing teacher coverage";
+  if (warning.message.startsWith("Multiple teacher mappings")) return "Overlapping teacher coverage";
+  if (warning.message.startsWith("Unfilled slot")) return "Unfilled slots";
+  if (warning.message.startsWith("Remaining")) return "Remaining periods";
+  if (warning.message.startsWith("Slot conflict")) return "Slot conflicts";
+  return "Other";
+};
+
+const filteredWarnings = computed(() => {
+  const term = normalize(warningSearch.value);
+  return timetable.value.warnings.filter((warning) => {
+    const category = warningCategory(warning);
+    return (
+      (warningCategoryFilter.value === "all" || category === warningCategoryFilter.value) &&
+      (!term ||
+        normalize(warning.message).includes(term) ||
+        normalize(category).includes(term))
+    );
+  });
+});
+
+const groupedWarnings = computed(() => {
+  const groups = new Map<string, WarningItem[]>();
+  filteredWarnings.value.forEach((warning) => {
+    const category = warningCategory(warning);
+    if (!groups.has(category)) groups.set(category, []);
+    groups.get(category)?.push(warning);
+  });
+  return [...groups.entries()].map(([label, items]) => ({ label, items }));
+});
 
 const resolveWarning = async (warning: WarningItem) => {
   if (!warning.action?.id) return;
@@ -1311,9 +1725,12 @@ const resolveWarning = async (warning: WarningItem) => {
             Supported shortcuts: exact class names like <span class="font-medium">1A</span>, grades like
             <span class="font-medium">7</span>, and ranges like <span class="font-medium">9-12</span>.
           </div>
+          <button @click="toggleSection('bulk')" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3 text-sm text-[#8a4b32]">
+            {{ sectionCollapsed('bulk') ? "Expand" : "Collapse" }}
+          </button>
         </div>
 
-        <div class="mt-5 grid gap-5 xl:grid-cols-2">
+        <div v-if="!sectionCollapsed('bulk')" class="mt-5 grid gap-5 xl:grid-cols-2">
           <div class="rounded-2xl border border-[#f0cdbb] bg-white p-4">
             <div class="flex items-center justify-between gap-3">
               <h3 class="font-semibold">Bulk classes</h3>
@@ -1450,6 +1867,37 @@ const resolveWarning = async (warning: WarningItem) => {
             </button>
             <p v-if="bulkAllocationStatus" class="mt-2 text-xs text-[#8a4b32]">{{ bulkAllocationStatus }}</p>
           </div>
+
+          <div class="rounded-2xl border border-[#f0cdbb] bg-white p-4 xl:col-span-2">
+            <div class="flex items-center justify-between gap-3">
+              <h3 class="font-semibold">Bulk non-essential slot locks</h3>
+              <span class="text-xs text-[#8a4b32]">{{ bulkLockPreview.ready.length }} ready lines</span>
+            </div>
+            <p class="mt-1 text-xs text-[#8a4b32]">
+              Format: <span class="font-medium">Subject list | Days | Period | Classes or grades</span>.
+              Use commas inside the subject list for shared slots, for example
+              <span class="font-medium">Bio, Comp | Monday, Wednesday | 3 | 9A, 9B</span>.
+              One class becomes a fixed lock. Multiple classes become a mass lock.
+            </p>
+            <textarea
+              v-model="bulkLockInput"
+              rows="6"
+              placeholder="Games | Friday | 7 | 1-8&#10;Bio, Comp | Monday, Wednesday | 3 | 9A, 9B, 10A, 10B&#10;Music | Tuesday | 4 | 4A"
+              class="mt-3 w-full rounded-2xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3"
+            />
+            <div class="mt-2 rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-3 py-3 text-xs text-[#8a4b32]">
+              <p>{{ bulkLockPreview.ready.length }} ready · {{ bulkLockPreview.errors.length }} lines need fixes</p>
+              <p v-if="bulkLockPreview.errors[0]" class="mt-1">{{ bulkLockPreview.errors[0] }}</p>
+            </div>
+            <button
+              @click="addBulkLocks"
+              :disabled="isBulkAddingLocks || bulkLockPreview.ready.length === 0"
+              class="mt-3 w-full rounded-xl bg-[#d17c5a] px-4 py-3 text-white disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {{ isBulkAddingLocks ? "Adding non-essential locks..." : `Add ${bulkLockPreview.ready.length} lock lines` }}
+            </button>
+            <p v-if="bulkLockStatus" class="mt-2 text-xs text-[#8a4b32]">{{ bulkLockStatus }}</p>
+          </div>
         </div>
       </section>
 
@@ -1466,8 +1914,11 @@ const resolveWarning = async (warning: WarningItem) => {
               <div class="rounded-xl border border-[#f0cdbb] bg-white px-3 py-2 text-xs text-[#8a4b32]">
                 Best for one-off edits
               </div>
+              <button @click="toggleSection('manualSetup')" class="rounded-xl border border-[#f0cdbb] bg-white px-3 py-2 text-xs text-[#8a4b32]">
+                {{ sectionCollapsed('manualSetup') ? "Expand" : "Collapse" }}
+              </button>
             </div>
-            <div class="mt-4 grid gap-5 lg:grid-cols-2">
+            <div v-if="!sectionCollapsed('manualSetup')" class="mt-4 grid gap-5 lg:grid-cols-2">
               <div>
                 <div class="flex gap-2">
                   <input v-model="newClassName" placeholder="Add class" class="flex-1 rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
@@ -1508,7 +1959,11 @@ const resolveWarning = async (warning: WarningItem) => {
               <div class="rounded-xl border border-[#f0cdbb] bg-white px-3 py-2 text-xs text-[#8a4b32]">
                 Best for cleanup
               </div>
+              <button @click="toggleSection('subjectEditor')" class="rounded-xl border border-[#f0cdbb] bg-white px-3 py-2 text-xs text-[#8a4b32]">
+                {{ sectionCollapsed('subjectEditor') ? "Expand" : "Collapse" }}
+              </button>
             </div>
+            <div v-if="!sectionCollapsed('subjectEditor')">
             <p class="mt-1 text-sm text-[#8a4b32]">
               Subjects are created once. Teacher coverage is assigned separately per class group so one subject can have many teachers.
             </p>
@@ -1626,115 +2081,118 @@ const resolveWarning = async (warning: WarningItem) => {
                 </ul>
               </div>
             </div>
+            </div>
           </div>
         </div>
         <div class="space-y-6">
           <div class="rounded-3xl border border-[#f0cdbb] bg-[#ffe7dc] p-5">
-            <h2 class="text-xl font-semibold">Step 1: Lock non-essential subjects</h2>
-            <p class="mt-1 text-sm text-[#8a4b32]">Use mass locks for school-wide periods and fixed locks for one class at one slot.</p>
-            <div class="mt-5 grid gap-5 xl:grid-cols-2">
-              <div class="rounded-2xl border border-[#f0cdbb] bg-white p-4">
-                <h3 class="font-semibold">Mass lock</h3>
-                <p class="mt-1 text-xs text-[#8a4b32]">Use this for assemblies, games, labs, swimming, or any subject that must happen at the same time across many classes.</p>
-                <input v-model="massSubjectSearch" placeholder="Filter subjects" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
-                <div class="mt-3 flex items-center justify-between gap-3 text-xs text-[#8a4b32]">
-                  <span>{{ newMassSubjectIds.length }} subjects selected</span>
-                  <button @click="clearMassSubjects" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2">
-                    Clear subjects
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-xl font-semibold">Step 1: Lock non-essential subjects</h2>
+                <p class="mt-1 text-sm text-[#8a4b32]">
+                  Use one builder for both cases. One class creates a fixed lock. Multiple classes create a mass lock.
+                </p>
+              </div>
+              <button @click="toggleSection('lockBuilder')" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3 text-sm text-[#8a4b32]">
+                {{ sectionCollapsed('lockBuilder') ? "Expand" : "Collapse" }}
+              </button>
+            </div>
+            <div v-if="!sectionCollapsed('lockBuilder')" class="mt-5 rounded-2xl border border-[#f0cdbb] bg-white p-4">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 class="font-semibold">Unified lock builder</h3>
+                  <p class="mt-1 text-xs text-[#8a4b32]">
+                    Pick subjects, pick one or more days, then select classes. The app decides whether it is fixed or mass.
+                  </p>
+                </div>
+                <div class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-3 py-2 text-xs text-[#8a4b32]">
+                  {{ newLockClassIds.length === 1 ? "Will create fixed locks" : "Will create mass locks" }}
+                </div>
+              </div>
+              <input v-model="lockBuilderSubjectSearch" placeholder="Filter subjects" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
+              <div class="mt-3 flex items-center justify-between gap-3 text-xs text-[#8a4b32]">
+                <span>{{ newLockSubjectIds.length }} subjects selected</span>
+                <button @click="clearLockSubjects" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2">
+                  Clear subjects
+                </button>
+              </div>
+              <div class="mt-3 max-h-40 overflow-y-auto rounded-xl border border-[#f0cdbb] bg-[#fff8f3] p-3">
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    v-for="subject in filterSubjects(lockBuilderSubjectSearch)"
+                    :key="subject._id"
+                    @click="toggleLockSubject(subject._id)"
+                    class="rounded-full border px-3 py-1 text-sm"
+                    :class="newLockSubjectIds.includes(subject._id) ? 'border-[#d17c5a] bg-[#d17c5a] text-white' : 'border-[#f0cdbb] bg-white'"
+                  >
+                    {{ subjectTitle(subject._id) }}
                   </button>
                 </div>
-                <div class="mt-3 max-h-40 overflow-y-auto rounded-xl border border-[#f0cdbb] bg-[#fff8f3] p-3">
-                  <div class="flex flex-wrap gap-2">
-                    <button
-                      v-for="subject in filterSubjects(massSubjectSearch)"
-                      :key="subject._id"
-                      @click="toggleMassSubject(subject._id)"
-                      class="rounded-full border px-3 py-1 text-sm"
-                      :class="newMassSubjectIds.includes(subject._id) ? 'border-[#d17c5a] bg-[#d17c5a] text-white' : 'border-[#f0cdbb] bg-white'"
-                    >
-                      {{ subjectTitle(subject._id) }}
+              </div>
+              <p class="mt-2 text-xs text-[#8a4b32]">Click to add or remove subjects. No Ctrl or Cmd key needed.</p>
+              <div class="mt-4 rounded-xl border border-[#f0cdbb] bg-[#fff8f3] p-3">
+                <div class="flex items-center justify-between gap-3">
+                  <p class="text-sm font-medium">Choose days</p>
+                  <button @click="clearLockDays" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2 text-xs text-[#8a4b32]">
+                    Clear days
+                  </button>
+                </div>
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <button
+                    v-for="day in dayOptions"
+                    :key="`lock-day-${day.index}`"
+                    @click="toggleLockDay(day.index)"
+                    class="rounded-full border px-3 py-2 text-sm"
+                    :class="newLockDayIds.includes(day.index) ? 'border-[#d17c5a] bg-[#d17c5a] text-white' : 'border-[#f0cdbb] bg-white'"
+                  >
+                    {{ day.label }}
+                  </button>
+                </div>
+                <input v-model="newLockPeriod" type="number" min="1" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+              </div>
+              <input v-model="lockBuilderClassSearch" placeholder="Filter classes or grade" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
+              <div class="mt-3 flex flex-wrap gap-2 text-xs">
+                <button @click="selectLockFiltered" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2 text-[#8a4b32]">
+                  Select filtered classes
+                </button>
+                <button @click="clearLockClasses" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2 text-[#8a4b32]">
+                  Clear classes
+                </button>
+              </div>
+              <div class="mt-3 max-h-56 space-y-3 overflow-y-auto">
+                <div v-for="group in filterClassGroups(lockBuilderClassSearch)" :key="`lock-${group.label}`" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] p-3">
+                  <div class="flex items-center justify-between">
+                    <p class="text-sm font-medium">{{ group.label }}</p>
+                    <button @click="toggleLockGrade(group.classes.map((klass) => klass._id))" class="text-xs text-[#b96547]">Toggle grade</button>
+                  </div>
+                  <div class="mt-2 flex flex-wrap gap-2">
+                    <button v-for="klass in group.classes" :key="klass._id" @click="toggleLockClass(klass._id)" class="rounded-full border px-3 py-1 text-sm" :class="newLockClassIds.includes(klass._id) ? 'border-[#d17c5a] bg-[#d17c5a] text-white' : 'border-[#f0cdbb] bg-white'">
+                      {{ klass.name }}
                     </button>
                   </div>
                 </div>
-                <p class="mt-2 text-xs text-[#8a4b32]">Click to add or remove subjects. No Ctrl or Cmd key needed.</p>
-                <div class="mt-3 grid grid-cols-2 gap-3">
-                  <select v-model="newMassDay" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
-                    <option v-for="day in dayOptions" :key="day.index" :value="day.index">{{ day.label }}</option>
-                  </select>
-                  <input v-model="newMassPeriod" type="number" min="1" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
-                </div>
-                <input v-model="massClassSearch" placeholder="Filter classes or grade" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
-                <div class="mt-3 flex flex-wrap gap-2 text-xs">
-                  <button @click="selectMassFiltered" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2 text-[#8a4b32]">
-                    Select filtered classes
-                  </button>
-                  <button @click="clearMassSelection" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2 text-[#8a4b32]">
-                    Clear classes
-                  </button>
-                </div>
-                <div class="mt-3 max-h-56 space-y-3 overflow-y-auto">
-                  <div v-for="group in filterClassGroups(massClassSearch)" :key="group.label" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] p-3">
-                    <div class="flex items-center justify-between">
-                      <p class="text-sm font-medium">{{ group.label }}</p>
-                      <button @click="toggleMassGrade(group.classes.map((klass) => klass._id))" class="text-xs text-[#b96547]">Toggle grade</button>
-                    </div>
-                    <div class="mt-2 flex flex-wrap gap-2">
-                      <button v-for="klass in group.classes" :key="klass._id" @click="toggleMassClass(klass._id)" class="rounded-full border px-3 py-1 text-sm" :class="newMassClassIds.includes(klass._id) ? 'border-[#d17c5a] bg-[#d17c5a] text-white' : 'border-[#f0cdbb] bg-white'">
-                        {{ klass.name }}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <p class="mt-3 text-xs text-[#8a4b32]">{{ newMassClassIds.length }} classes selected for this lock.</p>
-                <button @click="addMass" :disabled="isAddingMass" class="mt-3 w-full rounded-xl bg-[#d17c5a] px-4 py-3 text-white disabled:cursor-not-allowed disabled:opacity-70">
-                  {{ isAddingMass ? "Adding mass lock..." : "Add mass lock" }}
-                </button>
               </div>
-
-              <div class="rounded-2xl border border-[#f0cdbb] bg-white p-4">
-                <h3 class="font-semibold">Fixed lock</h3>
-                <input v-model="fixedClassSearch" placeholder="Filter classes" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
-                <select v-model="newFixedClassId" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
-                  <option value="">Select class</option>
-                  <option v-for="klass in filterClassGroups(fixedClassSearch).flatMap((group) => group.classes)" :key="klass._id" :value="klass._id">{{ klass.name }}</option>
-                </select>
-                <input v-model="fixedSubjectSearch" placeholder="Filter subjects" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
-                <div class="mt-3 flex items-center justify-between gap-3 text-xs text-[#8a4b32]">
-                  <span>{{ newFixedSubjectIds.length }} subjects selected</span>
-                  <button @click="clearFixedSubjects" class="rounded-full border border-[#f0cdbb] bg-white px-3 py-2">
-                    Clear subjects
-                  </button>
-                </div>
-                <div class="mt-3 max-h-40 overflow-y-auto rounded-xl border border-[#f0cdbb] bg-[#fff8f3] p-3">
-                  <div class="flex flex-wrap gap-2">
-                    <button
-                      v-for="subject in filterSubjects(fixedSubjectSearch)"
-                      :key="subject._id"
-                      @click="toggleFixedSubject(subject._id)"
-                      class="rounded-full border px-3 py-1 text-sm"
-                      :class="newFixedSubjectIds.includes(subject._id) ? 'border-[#d17c5a] bg-[#d17c5a] text-white' : 'border-[#f0cdbb] bg-white'"
-                    >
-                      {{ subjectTitle(subject._id) }}
-                    </button>
-                  </div>
-                </div>
-                <p class="mt-2 text-xs text-[#8a4b32]">Click to add or remove subjects. No Ctrl or Cmd key needed.</p>
-                <div class="mt-3 grid grid-cols-2 gap-3">
-                  <select v-model="newFixedDay" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3">
-                    <option v-for="day in dayOptions" :key="day.index" :value="day.index">{{ day.label }}</option>
-                  </select>
-                  <input v-model="newFixedPeriod" type="number" min="1" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3" />
-                </div>
-                <button @click="addFixed" :disabled="isAddingFixed" class="mt-3 w-full rounded-xl bg-[#d17c5a] px-4 py-3 text-white disabled:cursor-not-allowed disabled:opacity-70">
-                  {{ isAddingFixed ? "Adding fixed lock..." : "Add fixed lock" }}
-                </button>
+              <div class="mt-3 rounded-xl border border-dashed border-[#e5b6a1] bg-[#fff8f3] px-3 py-3 text-xs text-[#8a4b32]">
+                {{ newLockSubjectIds.length }} subjects · {{ newLockDayIds.length }} days · {{ newLockClassIds.length }} classes.
+                {{ newLockClassIds.length <= 1 ? "One class will be saved as fixed locks." : "Multiple classes will be saved as mass locks." }}
               </div>
+              <button @click="addLock" :disabled="isAddingLocks" class="mt-3 w-full rounded-xl bg-[#d17c5a] px-4 py-3 text-white disabled:cursor-not-allowed disabled:opacity-70">
+                {{ isAddingLocks ? "Adding locks..." : "Add non-essential locks" }}
+              </button>
             </div>
           </div>
 
           <div class="rounded-3xl border border-[#f0cdbb] bg-[#ffe7dc] p-5">
-            <h2 class="text-xl font-semibold">Step 2: Essential subject allocation</h2>
-            <p class="mt-1 text-sm text-[#8a4b32]">Pick the subject, set weekly periods, then choose the classes. Teacher is resolved automatically from the teacher coverage you saved above.</p>
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-xl font-semibold">Step 2: Essential subject allocation</h2>
+                <p class="mt-1 text-sm text-[#8a4b32]">Pick the subject, set weekly periods, then choose the classes. Teacher is resolved automatically from the teacher coverage you saved above.</p>
+              </div>
+              <button @click="toggleSection('essential')" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3 text-sm text-[#8a4b32]">
+                {{ sectionCollapsed('essential') ? "Expand" : "Collapse" }}
+              </button>
+            </div>
+            <div v-if="!sectionCollapsed('essential')">
             <input v-model="essentialSubjectSearch" placeholder="Filter essential subjects" class="mt-4 w-full rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
             <select v-model="newClassSubjectSubjectId" class="mt-3 w-full rounded-xl border border-[#f0cdbb] bg-white px-4 py-3">
               <option value="">Select subject</option>
@@ -1767,13 +2225,31 @@ const resolveWarning = async (warning: WarningItem) => {
               {{ newClassSubjectClassIds.length }} classes selected. Add teacher coverage first if this subject has different teachers for different grades.
             </div>
             <button @click="addClassSubject" class="mt-3 w-full rounded-xl bg-[#d17c5a] px-4 py-3 text-white">Add essential allocation</button>
+            </div>
           </div>
         </div>
       </section>
 
-      <section class="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+      <section
+        class="grid gap-6"
+        :class="
+          sectionCollapsed('constraints') && !sectionCollapsed('timetable')
+            ? 'xl:grid-cols-[220px_minmax(0,1fr)]'
+            : !sectionCollapsed('constraints') && sectionCollapsed('timetable')
+              ? 'xl:grid-cols-[minmax(0,1fr)_220px]'
+              : !sectionCollapsed('constraints') && !sectionCollapsed('timetable')
+                ? 'xl:grid-cols-[minmax(430px,1.1fr)_minmax(540px,1fr)]'
+                : 'xl:grid-cols-[220px_220px]'
+        "
+      >
         <div class="rounded-3xl border border-[#f0cdbb] bg-[#ffe7dc] p-5">
-          <h2 class="text-xl font-semibold">Existing constraints</h2>
+          <div class="flex items-start justify-between gap-3">
+            <h2 class="text-xl font-semibold">Existing constraints</h2>
+            <button @click="toggleSection('constraints')" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3 text-sm text-[#8a4b32]">
+              {{ sectionCollapsed('constraints') ? "Expand" : "Collapse" }}
+            </button>
+          </div>
+          <div v-if="!sectionCollapsed('constraints')">
           <div class="mt-4 grid gap-3 md:grid-cols-3">
             <input v-model="lockGradeFilter" placeholder="Filter by grade" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
             <input v-model="lockSubjectFilter" placeholder="Filter by subject" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
@@ -1784,7 +2260,7 @@ const resolveWarning = async (warning: WarningItem) => {
               </option>
             </select>
           </div>
-          <div class="mt-4 grid gap-5 xl:grid-cols-2">
+          <div class="mt-4 grid gap-5 2xl:grid-cols-2">
             <div>
               <h3 class="font-medium">Fixed locks</h3>
               <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto">
@@ -1862,50 +2338,125 @@ const resolveWarning = async (warning: WarningItem) => {
               No essential allocations match the current filters.
             </div>
           </div>
+          </div>
         </div>
         <div class="rounded-3xl border border-[#f0cdbb] bg-[#ffe7dc] p-5">
           <div class="flex items-center justify-between gap-3">
             <div>
               <h2 class="text-xl font-semibold">Generated timetable</h2>
-              <p class="mt-1 text-sm text-[#8a4b32]">Filter to a class when the full-school view becomes noisy.</p>
+              <p class="mt-1 text-sm text-[#8a4b32]">Filter by class, subject, or teacher to find where that entry appears across the school.</p>
             </div>
-            <input v-model="timetableSearch" placeholder="Filter by class" class="w-full max-w-xs rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+            <div class="flex w-full max-w-md items-center gap-3">
+              <button @click="toggleSection('timetable')" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3 text-sm text-[#8a4b32]">
+                {{ sectionCollapsed('timetable') ? "Expand" : "Collapse" }}
+              </button>
+            </div>
           </div>
 
-          <div v-if="timetable.warnings.length" class="mt-4 rounded-2xl border border-[#f0cdbb] bg-white p-4">
+          <div v-if="!sectionCollapsed('timetable')" class="mt-4 grid gap-3 md:grid-cols-3">
+            <input v-model="timetableClassFilter" placeholder="Filter by class" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3" />
+            <select v-model="timetableSubjectFilter" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3">
+              <option value="">All subjects</option>
+              <option v-for="subject in sortedSubjects" :key="`timetable-subject-${subject._id}`" :value="subject._id">
+                {{ subjectTitle(subject._id) }}
+              </option>
+            </select>
+            <select v-model="timetableTeacherFilter" class="rounded-xl border border-[#f0cdbb] bg-white px-4 py-3">
+              <option value="">All teachers</option>
+              <option v-for="teacher in sortedTeachers" :key="`timetable-teacher-${teacher._id}`" :value="teacher._id">
+                {{ teacher.name }}
+              </option>
+            </select>
+          </div>
+
+          <div v-if="!sectionCollapsed('timetable') && showingAggregateTimetable" class="mt-3 rounded-xl border border-[#f0cdbb] bg-white px-4 py-3 text-sm text-[#8a4b32]">
+            {{ aggregateMatchCount }} matching class-slot{{ aggregateMatchCount === 1 ? "" : "s" }} shown in one timetable.
+            Each cell lists the classes where the selected subject or teacher appears.
+          </div>
+
+          <div v-if="!sectionCollapsed('timetable') && timetable.warnings.length" class="mt-4 rounded-2xl border border-[#f0cdbb] bg-white p-4">
             <div class="flex items-center justify-between">
               <h3 class="font-medium">Warnings</h3>
-              <span class="text-xs text-[#8a4b32]">{{ timetable.warnings.length }}</span>
+              <span class="text-xs text-[#8a4b32]">{{ filteredWarnings.length }} shown</span>
             </div>
-            <ul class="mt-3 max-h-52 space-y-2 overflow-y-auto text-sm">
-              <li v-for="warning in timetable.warnings" :key="warning.id" class="flex items-center justify-between gap-3 rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-3 py-3">
-                <span>{{ warning.message }}</span>
-                <button v-if="warning.action?.id" @click="resolveWarning(warning)" class="text-xs text-[#b96547]">Resolve</button>
-              </li>
-            </ul>
+            <div class="mt-3 grid gap-3 md:grid-cols-2">
+              <input v-model="warningSearch" placeholder="Filter warnings" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3 text-sm" />
+              <select v-model="warningCategoryFilter" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] px-4 py-3 text-sm">
+                <option value="all">All warning types</option>
+                <option value="Teacher conflicts">Teacher conflicts</option>
+                <option value="Missing teacher coverage">Missing teacher coverage</option>
+                <option value="Overlapping teacher coverage">Overlapping teacher coverage</option>
+                <option value="Unfilled slots">Unfilled slots</option>
+                <option value="Remaining periods">Remaining periods</option>
+                <option value="Slot conflicts">Slot conflicts</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div class="mt-3 max-h-64 space-y-3 overflow-y-auto text-sm">
+              <div v-for="group in groupedWarnings" :key="group.label" class="rounded-xl border border-[#f0cdbb] bg-[#fff8f3] p-3">
+                <div class="flex items-center justify-between gap-3">
+                  <p class="font-medium">{{ group.label }}</p>
+                  <span class="text-xs text-[#8a4b32]">{{ group.items.length }}</span>
+                </div>
+                <ul class="mt-3 space-y-2">
+                  <li v-for="warning in group.items" :key="warning.id" class="flex items-center justify-between gap-3 rounded-xl border border-[#f0cdbb] bg-white px-3 py-3">
+                    <span>{{ warning.message }}</span>
+                    <button v-if="warning.action?.id" @click="resolveWarning(warning)" class="text-xs text-[#b96547]">Resolve</button>
+                  </li>
+                </ul>
+              </div>
+              <div v-if="groupedWarnings.length === 0" class="rounded-xl border border-dashed border-[#d9b3a0] bg-white px-4 py-8 text-center text-[#8a4b32]">
+                No warnings match the current filters.
+              </div>
+            </div>
           </div>
 
-          <div class="mt-4 space-y-5">
-            <div v-for="schedule in visibleSchedules" :key="schedule.classId" class="rounded-2xl border border-[#f0cdbb] bg-white p-4">
-              <h3 class="font-semibold">Class {{ schedule.className }}</h3>
+          <div v-if="!sectionCollapsed('timetable')" class="mt-4 space-y-5">
+            <div v-if="showingAggregateTimetable" class="rounded-2xl border border-[#f0cdbb] bg-white p-4">
+              <h3 class="font-semibold">
+                {{
+                  timetableSubjectFilter
+                    ? `${subjectTitle(timetableSubjectFilter)} timetable`
+                    : timetableTeacherFilter
+                      ? `${teacherById.get(timetableTeacherFilter)?.name ?? "Teacher"} timetable`
+                      : "Filtered timetable"
+                }}
+              </h3>
+              <p class="mt-1 text-sm text-[#8a4b32]">
+                {{
+                  timetableTeacherFilter && timetableSubjectFilter
+                    ? "Showing where this subject-teacher combination appears."
+                    : timetableTeacherFilter
+                      ? "Showing all classes handled by this teacher."
+                      : "Showing all classes where this subject appears."
+                }}
+              </p>
               <div class="mt-3 overflow-x-auto">
                 <table class="min-w-full text-sm">
                   <thead>
                     <tr class="text-left text-[#8a4b32]">
                       <th class="px-3 py-2">Day</th>
-                      <th v-for="period in 8" :key="period" class="px-3 py-2">P{{ period }}</th>
+                      <th v-for="period in 8" :key="`aggregate-period-${period}`" class="px-3 py-2">P{{ period }}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="day in dayOptions" :key="day.index" class="border-t border-[#f0cdbb]">
-                      <td class="px-3 py-3 font-medium text-[#8a4b32]">{{ day.short }}</td>
-                      <td v-for="period in 8" :key="period" class="px-3 py-3 align-top">
-                        <template v-if="period <= day.periods">
-                          <div v-if="schedule.grid[day.index][period]" class="rounded-xl border px-3 py-2" :class="schedule.grid[day.index][period]?.locked ? 'border-[#d17c5a] bg-[#ffd9c7]' : 'border-[#f0cdbb] bg-[#fff8f3]'">
-                            <p class="font-medium">{{ schedule.grid[day.index][period]?.subjectName }}</p>
-                            <p class="text-xs text-[#8a4b32]">{{ schedule.grid[day.index][period]?.teacherName }}</p>
+                    <tr v-for="dayRow in aggregateTimetable" :key="`aggregate-${dayRow.day.index}`" class="border-t border-[#f0cdbb]">
+                      <td class="px-3 py-3 font-medium text-[#8a4b32]">{{ dayRow.day.short }}</td>
+                      <td v-for="slot in dayRow.slots" :key="`aggregate-${dayRow.day.index}-${slot.period}`" class="px-3 py-3 align-top">
+                        <template v-if="slot.period <= dayRow.day.periods">
+                          <div v-if="slot.matches.length" class="space-y-2">
+                            <div
+                              v-for="match in slot.matches"
+                              :key="`${dayRow.day.index}-${slot.period}-${match.className}`"
+                              class="rounded-xl border px-3 py-2"
+                              :class="match.locked ? 'border-[#d17c5a] bg-[#ffd9c7]' : 'border-[#f0cdbb] bg-[#fff8f3]'"
+                            >
+                              <p class="font-medium">{{ match.className }}</p>
+                              <p class="text-xs text-[#8a4b32]">{{ match.subjectName }}</p>
+                              <p class="text-xs text-[#8a4b32]">{{ match.teacherName }}</p>
+                            </div>
                           </div>
-                          <div v-else class="italic text-[#b07a63]">Unfilled</div>
+                          <div v-else class="italic text-[#b07a63]">None</div>
                         </template>
                         <div v-else class="italic text-[#d6a08a]">-</div>
                       </td>
@@ -1914,7 +2465,48 @@ const resolveWarning = async (warning: WarningItem) => {
                 </table>
               </div>
             </div>
-            <div v-if="visibleSchedules.length === 0" class="rounded-2xl border border-dashed border-[#d9b3a0] bg-white px-4 py-8 text-center text-[#8a4b32]">
+            <template v-else>
+              <div v-for="schedule in visibleSchedules" :key="schedule.classId" class="rounded-2xl border border-[#f0cdbb] bg-white p-4">
+                <h3 class="font-semibold">Class {{ schedule.className }}</h3>
+                <div class="mt-3 overflow-x-auto">
+                  <table class="min-w-full text-sm">
+                    <thead>
+                      <tr class="text-left text-[#8a4b32]">
+                        <th class="px-3 py-2">Day</th>
+                        <th v-for="period in 8" :key="period" class="px-3 py-2">P{{ period }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="day in dayOptions" :key="day.index" class="border-t border-[#f0cdbb]">
+                        <td class="px-3 py-3 font-medium text-[#8a4b32]">{{ day.short }}</td>
+                        <td v-for="period in 8" :key="period" class="px-3 py-3 align-top">
+                          <template v-if="period <= day.periods">
+                            <div
+                              v-if="schedule.grid[day.index][period]"
+                              class="rounded-xl border px-3 py-2 transition"
+                              :class="[
+                                schedule.grid[day.index][period]?.locked ? 'border-[#d17c5a] bg-[#ffd9c7]' : 'border-[#f0cdbb] bg-[#fff8f3]',
+                                hasTimetableFilters && !timetableCellMatches(schedule.grid[day.index][period]) ? 'opacity-45' : '',
+                                hasTimetableFilters && timetableCellMatches(schedule.grid[day.index][period]) ? 'ring-2 ring-[#d17c5a]/30' : '',
+                              ]"
+                            >
+                              <p class="font-medium">{{ schedule.grid[day.index][period]?.subjectName }}</p>
+                              <p class="text-xs text-[#8a4b32]">{{ schedule.grid[day.index][period]?.teacherName }}</p>
+                            </div>
+                            <div v-else class="italic text-[#b07a63]">Unfilled</div>
+                          </template>
+                          <div v-else class="italic text-[#d6a08a]">-</div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </template>
+            <div v-if="showingAggregateTimetable && aggregateMatchCount === 0" class="rounded-2xl border border-dashed border-[#d9b3a0] bg-white px-4 py-8 text-center text-[#8a4b32]">
+              No timetable entries match the selected subject, teacher, or class filter.
+            </div>
+            <div v-else-if="!showingAggregateTimetable && visibleSchedules.length === 0" class="rounded-2xl border border-dashed border-[#d9b3a0] bg-white px-4 py-8 text-center text-[#8a4b32]">
               No classes match the current filter.
             </div>
           </div>
